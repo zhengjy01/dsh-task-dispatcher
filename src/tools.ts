@@ -54,8 +54,6 @@ export function dispatcherStatusTool(ctx: ToolContext) {
           lastDispatchAt: { type: 'string' },
           lastTaskCount: { type: 'number' },
           lastTaskTitles: { type: 'array', items: { type: 'string' } },
-          autoExecute: { type: 'boolean' },
-          retryCooldownMinutes: { type: 'number' },
           workerPrompt: { type: 'string' },
           configPath: { type: 'string' },
         },
