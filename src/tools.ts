@@ -36,7 +36,11 @@ export function dispatcherStatusTool(ctx: ToolContext) {
         properties: {
           ok: { type: 'boolean', required: true },
           message: { type: 'string', required: true },
+          configured: { type: 'boolean' },
           enabled: { type: 'boolean' },
+          announceToAgent: { type: 'boolean' },
+          dispatchHour: { type: 'number' },
+          dispatchMinute: { type: 'number' },
           dispatchTime: { type: 'string' },
           projectName: { type: 'string' },
           projectId: { type: 'string' },
