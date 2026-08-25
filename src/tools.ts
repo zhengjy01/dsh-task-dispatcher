@@ -27,7 +27,7 @@ export interface ToolContext {
 export function dispatcherStatusTool(ctx: ToolContext) {
   return defineTool({
     name: 'dispatcher_status',
-    description: '查看 dsh-task-dispatcher 插件状态：是否启用、每日派发时间、任务来源清单、过滤方式、通知开关、最近一次派发结果（时间/数量/任务标题）与今日任务文件路径。不会泄露任何密钥。',
+    description: '查看 dsh-task-dispatcher 插件状态：是否启用、拉取间隔（分钟）、任务来源清单、过滤方式、通知开关、最近一次派发结果（时间/数量/任务标题）与今日任务文件路径。不会泄露任何密钥。',
     parameters: {},
     output: {
       schema: {
@@ -39,9 +39,7 @@ export function dispatcherStatusTool(ctx: ToolContext) {
           configured: { type: 'boolean' },
           enabled: { type: 'boolean' },
           announceToAgent: { type: 'boolean' },
-          dispatchHour: { type: 'number' },
-          dispatchMinute: { type: 'number' },
-          dispatchTime: { type: 'string' },
+          dispatchIntervalMinutes: { type: 'number' },
           projectName: { type: 'string' },
           projectId: { type: 'string' },
           dueMode: { type: 'string' },
@@ -61,24 +59,22 @@ export function dispatcherStatusTool(ctx: ToolContext) {
     async execute() {
       try {
         const view = await ctx.store.view()
-        const now = new Date()
-        const next = new Date(now)
-        next.setHours(view.dispatchHour, view.dispatchMinute, 0, 0)
-        if (next <= now) next.setDate(next.getDate() + 1)
+        const interval = view.dispatchIntervalMinutes === 0
+          ? '已关闭定时'
+          : ('每 ' + view.dispatchIntervalMinutes + ' 分钟自动拉取')
         const parts: string[] = [
           '插件状态：' + (view.enabled ? '已启用' : '已禁用'),
-          '每日派发：' + String(view.dispatchHour).padStart(2, '0') + ':' + String(view.dispatchMinute).padStart(2, '0'),
-          '下次派发：' + localLabel(next),
+          '拉取间隔：' + interval,
           '任务来源：滴答清单「' + view.projectName + '」',
           '过滤：' + (view.dueMode === 'all' ? '全部未完成' : '今天到期/逾期' + (view.includeUndated ? ' + 无截止' : '')),
           '通知：' + [view.notifyFlomo ? 'flomo' : '', view.notifyMac ? 'macOS' : ''].filter(Boolean).join('+') || '无',
           '今日任务文件：' + view.taskFile,
         ]
         if (view.lastDispatchAt) {
-          parts.push('上次派发：' + view.lastDispatchAt + ' · ' + view.lastTaskCount + ' 项')
+          parts.push('上次拉取：' + view.lastDispatchAt + ' · ' + view.lastTaskCount + ' 项')
           parts.push('任务列表：' + (view.lastTaskTitles.length > 0 ? view.lastTaskTitles.join('；') : '（空）'))
         } else {
-          parts.push('上次派发：（尚未派发）')
+          parts.push('上次拉取：（尚未拉取）')
         }
         return { ok: true, message: parts.join('\n'), ...view }
       } catch (error) {
@@ -92,11 +88,10 @@ export function dispatcherStatusTool(ctx: ToolContext) {
 export function dispatcherConfigTool(ctx: ToolContext) {
   return defineTool({
     name: 'dispatcher_config',
-    description: '配置 dsh-task-dispatcher：enabled（总开关）、dispatchHour/dispatchMinute（每日派发时刻，如 8/30）、projectName 或 projectId（任务来源滴答清单，默认 5️⃣AI）、dueMode（today=今天到期/逾期，all=全部未完成）、includeUndated（是否含无截止任务）、notifyFlomo/notifyMac（通知开关）、flomoTag（flomo 标签）、taskFile（今日任务文件路径）、announceToAgent（是否在系统提示公告）。配置持久化到 ~/.dsh/dsh-task-dispatcher.json（0600）。传 reset: true 恢复默认。',
+    description: '配置 dsh-task-dispatcher：enabled（总开关）、dispatchIntervalMinutes（每隔多少分钟自动拉取一次，0=关闭定时）、projectName 或 projectId（任务来源滴答清单，默认 5️⃣AI）、dueMode（today=今天到期/逾期，all=全部未完成）、includeUndated（是否含无截止任务）、notifyFlomo/notifyMac（通知开关）、flomoTag（flomo 标签）、taskFile（今日任务文件路径）、announceToAgent（是否在系统提示公告）。配置持久化到 ~/.dsh/dsh-task-dispatcher.json（0600）。传 reset: true 恢复默认。',
     parameters: {
       enabled: { type: 'boolean', description: '插件总开关' },
-      dispatchHour: { type: 'number', description: '每日派发小时（0-23）' },
-      dispatchMinute: { type: 'number', description: '每日派发分钟（0-59）' },
+      dispatchIntervalMinutes: { type: 'number', description: '每隔多少分钟自动拉取一次滴答清单（0 关闭定时）' },
       projectName: { type: 'string', description: '任务来源清单名（默认 5️⃣AI）' },
       projectId: { type: 'string', description: '可选：来源清单 id（按名称解析不到时用）' },
       dueMode: { type: 'string', enum: ['today', 'all'], description: 'today=今天到期/逾期；all=全部未完成' },
@@ -116,7 +111,7 @@ export function dispatcherConfigTool(ctx: ToolContext) {
           ok: { type: 'boolean', required: true },
           message: { type: 'string', required: true },
           enabled: { type: 'boolean' },
-          dispatchTime: { type: 'string' },
+          dispatchIntervalMinutes: { type: 'number' },
           projectName: { type: 'string' },
           dueMode: { type: 'string' },
           includeUndated: { type: 'boolean' },
@@ -133,15 +128,18 @@ export function dispatcherConfigTool(ctx: ToolContext) {
       try {
         if (args !== undefined && args.reset === true) {
           await ctx.store.patch({
-            enabled: false, announceToAgent: true, dispatchHour: 8, dispatchMinute: 30,
+            enabled: true, announceToAgent: true, dispatchIntervalMinutes: 30,
             projectName: '5️⃣AI', projectId: '', dueMode: 'today', includeUndated: true,
             notifyFlomo: true, flomoTag: 'AI/DSH/派发', notifyMac: true,
             taskFile: '',
           } as Record<string, unknown>)
+          args = {}
         }
         const view = await ctx.store.patch(args)
-        const time = String(view.dispatchHour).padStart(2, '0') + ':' + String(view.dispatchMinute).padStart(2, '0')
-        return { ok: true, message: '配置已保存：' + (view.enabled ? '启用' : '禁用') + ' · 每日 ' + time + ' · 来源「' + view.projectName + '」', enabled: view.enabled, dispatchTime: time, projectName: view.projectName, dueMode: view.dueMode, includeUndated: view.includeUndated, notifyFlomo: view.notifyFlomo, flomoTag: view.flomoTag, notifyMac: view.notifyMac, taskFile: view.taskFile, configPath: view.configPath }
+        const interval = view.dispatchIntervalMinutes === 0
+          ? '已关闭定时'
+          : ('每 ' + view.dispatchIntervalMinutes + ' 分钟')
+        return { ok: true, message: '配置已保存：' + (view.enabled ? '启用' : '禁用') + ' · ' + interval + ' · 来源「' + view.projectName + '」', enabled: view.enabled, dispatchIntervalMinutes: view.dispatchIntervalMinutes, projectName: view.projectName, dueMode: view.dueMode, includeUndated: view.includeUndated, notifyFlomo: view.notifyFlomo, flomoTag: view.flomoTag, notifyMac: view.notifyMac, taskFile: view.taskFile, configPath: view.configPath }
       } catch (error) {
         return { ok: false, message: '配置失败: ' + String(error instanceof Error ? error.message : error) }
       }
@@ -153,7 +151,7 @@ export function dispatcherConfigTool(ctx: ToolContext) {
 export function dispatcherRunTool(ctx: ToolContext) {
   return defineTool({
     name: 'dispatcher_run',
-    description: '立即执行一次任务派发：从滴答清单「5️⃣AI」（或配置的来源）拉取今天到期的任务，写入今日任务文件，并发送 flomo + macOS 通知。常用于手动触发派发或验证配置。',
+    description: '立即执行一次任务拉取：从滴答清单「5️⃣AI」（或配置的来源）拉取今天到期的任务，写入今日任务文件，并发送 flomo + macOS 通知（手动触发始终通知）。常用于手动触发派发或验证配置。',
     parameters: {},
     output: {
       schema: {
@@ -174,7 +172,7 @@ export function dispatcherRunTool(ctx: ToolContext) {
     },
     async execute() {
       try {
-        const result = await doDispatch(ctx.store, ctx.api)
+        const result = await doDispatch(ctx.store, ctx.api, { forceNotify: true })
         const flomoNotify = result.notifies.find((n) => n.channel === 'flomo')
         const macNotify = result.notifies.find((n) => n.channel === 'mac')
         return {
@@ -184,8 +182,8 @@ export function dispatcherRunTool(ctx: ToolContext) {
           projectName: result.projectName,
           taskCount: result.taskCount,
           taskFile: result.taskFile,
-          flomoNotify: flomoNotify?.ok === true ? 'ok' : 'failed',
-          macNotify: macNotify?.ok === true ? 'ok' : 'failed',
+          flomoNotify: flomoNotify?.ok === true ? 'ok' : (flomoNotify === undefined ? 'none' : 'failed'),
+          macNotify: macNotify?.ok === true ? 'ok' : (macNotify === undefined ? 'none' : 'failed'),
         }
       } catch (error) {
         return { ok: false, message: '派发失败: ' + String(error instanceof Error ? error.message : error) }
@@ -197,14 +195,4 @@ export function dispatcherRunTool(ctx: ToolContext) {
 /** Build the tool list for registration. */
 export function buildTools(ctx: ToolContext) {
   return [dispatcherStatusTool(ctx), dispatcherConfigTool(ctx), dispatcherRunTool(ctx)]
-}
-
-/** Local date-time label for a Date. */
-function localLabel(d: Date): string {
-  const y = d.getFullYear()
-  const m = String(d.getMonth() + 1).padStart(2, '0')
-  const day = String(d.getDate()).padStart(2, '0')
-  const hh = String(d.getHours()).padStart(2, '0')
-  const mm = String(d.getMinutes()).padStart(2, '0')
-  return `${y}-${m}-${day} ${hh}:${mm}`
 }

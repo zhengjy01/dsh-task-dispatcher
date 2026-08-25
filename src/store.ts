@@ -1,7 +1,7 @@
 /**
  * dsh-task-dispatcher — config store.
  *
- * Persists the dispatcher configuration (dispatch time, source TickTick
+ * Persists the dispatcher configuration (poll interval, source TickTick
  * project, filtering, notify toggles, and the last dispatch summary) to
  * ~/.dsh/dsh-task-dispatcher.json (mode 0600). Reuses the TickTick OAuth
  * credentials already stored by the dsh-ticktick plugin (~/.dsh/dsh-ticktick.json)
@@ -33,10 +33,8 @@ export type DueMode = 'today' | 'all'
 export interface DispatcherConfig {
   enabled: boolean
   announceToAgent: boolean
-  /** Daily dispatch hour (0-23). */
-  dispatchHour: number
-  /** Daily dispatch minute (0-59). */
-  dispatchMinute: number
+  /** Poll interval in minutes; 0 disables the automatic pull. */
+  dispatchIntervalMinutes: number
   /** Source TickTick list, resolved by name; falls back to projectId. */
   projectName: string
   /** Optional explicit project id (name-resolution wins when both present). */
@@ -66,8 +64,7 @@ export interface DispatcherConfigView {
   configured: boolean
   enabled: boolean
   announceToAgent: boolean
-  dispatchHour: number
-  dispatchMinute: number
+  dispatchIntervalMinutes: number
   projectName: string
   projectId: string
   dueMode: DueMode
@@ -87,8 +84,7 @@ function defaults(): DispatcherConfig {
   return {
     enabled: true,
     announceToAgent: true,
-    dispatchHour: 8,
-    dispatchMinute: 30,
+    dispatchIntervalMinutes: 30,
     projectName: '5️⃣AI',
     projectId: '',
     dueMode: 'today',
@@ -113,8 +109,7 @@ function parse(raw: unknown): DispatcherConfig {
   return {
     enabled: bool(record.enabled, d.enabled),
     announceToAgent: bool(record.announceToAgent, d.announceToAgent),
-    dispatchHour: clampInt(num(record.dispatchHour, d.dispatchHour), 0, 23),
-    dispatchMinute: clampInt(num(record.dispatchMinute, d.dispatchMinute), 0, 59),
+    dispatchIntervalMinutes: clampInt(num(record.dispatchIntervalMinutes, d.dispatchIntervalMinutes), 0, 24 * 60),
     projectName: str(record.projectName, d.projectName),
     projectId: str(record.projectId, ''),
     dueMode: record.dueMode === 'all' ? 'all' : 'today',
@@ -165,8 +160,7 @@ export class DispatcherStore {
       configured: true,
       enabled: cfg.enabled,
       announceToAgent: cfg.announceToAgent,
-      dispatchHour: cfg.dispatchHour,
-      dispatchMinute: cfg.dispatchMinute,
+      dispatchIntervalMinutes: cfg.dispatchIntervalMinutes,
       projectName: cfg.projectName,
       projectId: cfg.projectId ?? '',
       dueMode: cfg.dueMode,
@@ -188,8 +182,7 @@ export class DispatcherStore {
     const next: DispatcherConfig = { ...cfg }
     if (args !== undefined && typeof args.enabled === 'boolean') next.enabled = args.enabled
     if (args !== undefined && typeof args.announceToAgent === 'boolean') next.announceToAgent = args.announceToAgent
-    if (args !== undefined && args.dispatchHour !== undefined) next.dispatchHour = clampInt(Number(args.dispatchHour), 0, 23)
-    if (args !== undefined && args.dispatchMinute !== undefined) next.dispatchMinute = clampInt(Number(args.dispatchMinute), 0, 59)
+    if (args !== undefined && args.dispatchIntervalMinutes !== undefined) next.dispatchIntervalMinutes = clampInt(Number(args.dispatchIntervalMinutes), 0, 24 * 60)
     if (args !== undefined && typeof args.projectName === 'string') next.projectName = args.projectName.trim()
     if (args !== undefined && typeof args.projectId === 'string') next.projectId = args.projectId.trim()
     if (args !== undefined && (args.dueMode === 'today' || args.dueMode === 'all')) next.dueMode = args.dueMode

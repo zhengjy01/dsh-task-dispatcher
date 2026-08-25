@@ -88,6 +88,24 @@ await store.patch({ dueMode: 'today', includeUndated: true, projectName: 'GhostL
 const res4 = await doDispatch(store, fakeApi2)
 check('falls back to projectId when name not found', res4.ok === true && res4.projectId === 'p-5ai', res4.message)
 
+console.log('run 5: change-detection (interval mode notifies only on change)')
+await store.patch({ dueMode: 'all', includeUndated: true, projectName: '5️⃣AI', projectId: '' })
+const baseApi = { getProjects: async () => [{ id: 'p-5ai', name: '5️⃣AI', closed: false }], getProjectData: async () => ({ tasks: [
+  { id: 'a', projectId: 'p-5ai', title: '任务A', status: 0 },
+  { id: 'b', projectId: 'p-5ai', title: '任务B', status: 0 },
+] }) }
+const first = await doDispatch(store, baseApi)
+check('first dispatch changed=true', first.changed === true, first.changed)
+const repeat = await doDispatch(store, baseApi)
+check('identical re-dispatch changed=false (no notify spam)', repeat.changed === false, repeat.changed)
+const plusApi = { getProjects: baseApi.getProjects, getProjectData: async () => ({ tasks: [
+  { id: 'a', projectId: 'p-5ai', title: '任务A', status: 0 },
+  { id: 'b', projectId: 'p-5ai', title: '任务B', status: 0 },
+  { id: 'c', projectId: 'p-5ai', title: '任务C', status: 0 },
+] }) }
+const plus = await doDispatch(store, plusApi)
+check('new task added -> changed=true', plus.changed === true, plus.changed)
+
 await rm(root, { recursive: true, force: true })
 if (failures > 0) {
   console.error('\n' + failures + ' check(s) failed')

@@ -10,11 +10,10 @@
       config:
         announceToAgent: true   # 在系统提示中公告插件（能力 + 今日任务文件路径）
         enabled: true           # 插件总开关
-        dispatchHour: 8         # 每日派发小时（0-23）
-        dispatchMinute: 30      # 每日派发分钟（0-59）
+        dispatchIntervalMinutes: 30   # 每隔多少分钟自动从滴答清单拉取一次（0 = 关闭定时）
         projectName: "5️⃣AI"      # 任务来源清单（按名称解析）
         dueMode: "today"         # today = 今天到期/逾期；all = 全部未完成
         includeUndated: true     # 是否包含无截止日期任务
-        notifyFlomo: true        # 派发时推送 flomo
+        notifyFlomo: true        # 有任务变化时推送 flomo
         flomoTag: "AI/DSH/派发"   # flomo 标签
-        notifyMac: true          # 派发时 macOS 通知
+        notifyMac: true          # 有任务变化时 macOS 通知

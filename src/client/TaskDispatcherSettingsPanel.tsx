@@ -1,9 +1,10 @@
 /**
  * Task-dispatcher settings panel — rendered inside the web settings page
- * (settings.section entry). Configuration form (dispatch time, source list,
+ * (settings.section entry). Configuration form (poll interval, source list,
  * filter, notify toggles, task file) plus a manual dispatch button and the
- * last-dispatch summary. Plain React, no emoji, no external UI package —
- * inline styles only.
+ * last-pull task list. The panel is self-explanatory: a short intro explains
+ * how the dispatcher works, and the task list at the bottom is labelled as a
+ * snapshot. Plain React, no emoji, no external UI package — inline styles only.
  */
 import { useCallback, useEffect, useState } from 'react'
 import { DispatcherApi, type DispatcherConfigView, type DispatcherRunResult } from './api.ts'
@@ -17,7 +18,7 @@ const s = {
     display: 'flex',
     flexDirection: 'column',
     gap: '10px',
-    maxWidth: '600px',
+    maxWidth: '620px',
     padding: '14px 16px',
     borderRadius: '10px',
     border: '1px solid rgba(128,128,128,0.3)',
@@ -27,6 +28,7 @@ const s = {
   title: { fontWeight: 600, fontSize: '13px', margin: 0 } as const,
   status: { fontSize: '12px', opacity: 0.85 } as const,
   statusWarn: { fontSize: '12px', opacity: 0.9, color: '#c9763a' } as const,
+  hint: { fontSize: '12px', opacity: 0.85, lineHeight: '1.5', margin: 0 } as const,
   row: { display: 'flex', gap: '6px', alignItems: 'center' } as const,
   label: { fontSize: '12px', opacity: 0.85, whiteSpace: 'nowrap' } as const,
   input: {
@@ -40,7 +42,7 @@ const s = {
     fontSize: '12px',
   } as const,
   num: {
-    width: '64px',
+    width: '72px',
     padding: '5px 8px',
     borderRadius: '6px',
     border: '1px solid rgba(128,128,128,0.35)',
@@ -60,22 +62,24 @@ const s = {
     fontSize: '12px',
   } as const,
   msg: { fontSize: '12px', whiteSpace: 'pre-wrap', wordBreak: 'break-all', opacity: 0.9 } as const,
+  listHead: { fontSize: '12px', opacity: 0.9, margin: 0 } as const,
   list: { fontSize: '12px', margin: 0, paddingLeft: '18px' } as const,
 }
 
 /** Status line for the current config view. */
 function statusText(view: DispatcherConfigView | null): string {
   if (view === null) return '加载中…'
-  const time = String(view.dispatchHour).padStart(2, '0') + ':' + String(view.dispatchMinute).padStart(2, '0')
-  const base = (view.enabled ? '已启用' : '已禁用') + ' · 每日 ' + time + ' · 来源「' + view.projectName + '」'
-  return base + (view.lastDispatchAt ? ' · 上次 ' + view.lastDispatchAt + '（' + view.lastTaskCount + ' 项）' : ' · 尚未派发')
+  const interval = view.dispatchIntervalMinutes === 0
+    ? '已关闭定时'
+    : ('每 ' + view.dispatchIntervalMinutes + ' 分钟')
+  return (view.enabled ? '已启用' : '已禁用') + ' · ' + interval + ' · 来源「' + view.projectName + '」' +
+    (view.lastDispatchAt ? ' · 上次 ' + view.lastDispatchAt + '（' + view.lastTaskCount + ' 项）' : ' · 尚未拉取')
 }
 
 /** The settings panel component. */
 export function TaskDispatcherSettingsPanel(): JSX.Element {
   const [view, setView] = useState<DispatcherConfigView | null>(null)
-  const [dispatchHour, setDispatchHour] = useState('8')
-  const [dispatchMinute, setDispatchMinute] = useState('30')
+  const [intervalMinutes, setIntervalMinutes] = useState('30')
   const [projectName, setProjectName] = useState('5️⃣AI')
   const [dueMode, setDueMode] = useState('today')
   const [includeUndated, setIncludeUndated] = useState(true)
@@ -90,8 +94,7 @@ export function TaskDispatcherSettingsPanel(): JSX.Element {
     try {
       const v = await api.getStatus()
       setView(v)
-      setDispatchHour(String(v.dispatchHour))
-      setDispatchMinute(String(v.dispatchMinute))
+      setIntervalMinutes(String(v.dispatchIntervalMinutes))
       setProjectName(v.projectName)
       setDueMode(v.dueMode)
       setIncludeUndated(v.includeUndated)
@@ -122,8 +125,7 @@ export function TaskDispatcherSettingsPanel(): JSX.Element {
   const save = (): void => {
     void run(async () => {
       const next = await api.setConfig({
-        dispatchHour: Number(dispatchHour) || 8,
-        dispatchMinute: Number(dispatchMinute) || 30,
+        dispatchIntervalMinutes: Number(intervalMinutes) >= 0 ? Number(intervalMinutes) : 30,
         projectName,
         dueMode,
         includeUndated,
@@ -151,14 +153,19 @@ export function TaskDispatcherSettingsPanel(): JSX.Element {
   return (
     <div style={s.card}>
       <p style={s.title}>滴答清单任务派发器</p>
+
+      <p style={s.hint}>
+        每隔一段间隔，插件会自动从滴答清单「{projectName || '来源清单'}」拉取今天到期的任务，写入今日任务文件（默认
+        ~/.dsh/dsh-task-dispatcher/today-tasks.md）；<b>任务有变化时</b>才发 flomo + macOS 通知，没变化则保持安静。
+        你随手在滴答清单里加任务，插件会在下次拉取时自动带进来。下方的「上次拉取任务列表」只是最近一次拉取到的任务快照，非实时。
+      </p>
+
       <div style={view !== null && view.enabled ? s.status : s.statusWarn}>{statusText(view)}</div>
 
       <div style={s.row}>
-        <span style={s.label}>每日派发</span>
-        <input style={s.num} value={dispatchHour} onChange={(e) => setDispatchHour(e.target.value)} />
-        <span style={s.label}>:</span>
-        <input style={s.num} value={dispatchMinute} onChange={(e) => setDispatchMinute(e.target.value)} />
-        <span style={s.label}>（时:分）</span>
+        <span style={s.label}>拉取间隔</span>
+        <input style={s.num} value={intervalMinutes} onChange={(e) => setIntervalMinutes(e.target.value)} />
+        <span style={s.label}>分钟（0 = 关闭定时自动拉取）</span>
       </div>
 
       <div style={s.row}>
@@ -191,14 +198,17 @@ export function TaskDispatcherSettingsPanel(): JSX.Element {
 
       <div style={s.row}>
         <button style={s.button} onClick={save} disabled={busy}>保存配置</button>
-        <button style={s.button} onClick={dispatchNow} disabled={busy}>立即派发</button>
+        <button style={s.button} onClick={dispatchNow} disabled={busy}>立即拉取</button>
         <button style={s.button} onClick={() => void refresh()} disabled={busy}>刷新</button>
       </div>
 
       {lastList !== null && (
-        <ul style={s.list}>
-          {lastList.map((t, i) => <li key={i}>{t}</li>)}
-        </ul>
+        <>
+          <p style={s.listHead}>上次拉取任务列表（快照）：</p>
+          <ul style={s.list}>
+            {lastList.map((t, i) => <li key={i}>{t}</li>)}
+          </ul>
+        </>
       )}
       {msg !== '' && <div style={s.msg}>{msg}</div>}
     </div>

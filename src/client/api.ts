@@ -8,8 +8,7 @@ export interface DispatcherConfigView {
   configured: boolean
   enabled: boolean
   announceToAgent: boolean
-  dispatchHour: number
-  dispatchMinute: number
+  dispatchIntervalMinutes: number
   projectName: string
   projectId: string
   dueMode: string

@@ -40,6 +40,10 @@ export interface DispatchResult {
   tasks: DispatchedTask[]
   taskFile: string
   notifies: NotifyResult[]
+  /** True when the task set changed since the last dispatch (or a manual run forced a notify). */
+  changed: boolean
+  /** True when at least one notify channel fired. */
+  notified: boolean
 }
 
 /** Local calendar date as YYYY-MM-DD. */
@@ -50,11 +54,21 @@ export function localDateString(d = new Date()): string {
   return `${y}-${m}-${day}`
 }
 
-/** Whether a dueDate string is on or before `today` (calendar date compare). */
+/** Local calendar date of an ISO dueDate, or null when unparseable. */
+function localDateOf(iso: string): string | null {
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return null
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
+/** Whether a dueDate is on or before `today` (local calendar date compare). */
 function dueThisDay(dueDate: string | undefined, today: string): boolean {
   if (typeof dueDate !== 'string' || dueDate === '') return false
-  const datePart = dueDate.slice(0, 10)
-  return /^\d{4}-\d{2}-\d{2}$/.test(datePart) && datePart <= today
+  const local = localDateOf(dueDate)
+  return local !== null && local <= today
 }
 
 /** Does a task qualify for today's dispatch? */
@@ -79,18 +93,22 @@ async function resolveProjectId(api: TickTickApi, cfg: DispatcherConfig): Promis
   throw new Error('未匹配到滴答清单「' + cfg.projectName + '」清单：请在 dispatcher_config 里用 projectName / projectId 指定来源清单。')
 }
 
-/** Human-readable due label. */
+/** Human-readable due label (local date). */
 function dueLabel(dueDate: string | undefined): string {
   if (typeof dueDate !== 'string' || dueDate === '') return '无截止'
-  return dueDate.slice(0, 10)
+  return localDateOf(dueDate) ?? '无截止'
 }
 
 /**
  * Run one dispatch using the given store and (optionally) an injected
  * TickTickApi (the smoke tests inject a fake). Writes the today-tasks file
  * and notifies, then records the dispatch on the store.
+ *
+ * On the scheduled interval, notify only when the task set CHANGED since the
+ * last dispatch (so a repeated pull with no new tasks stays silent). A manual
+ * `dispatcher_run` passes { forceNotify: true } to always notify.
  */
-export async function doDispatch(store: DispatcherStore, api: TickTickApi): Promise<DispatchResult> {
+export async function doDispatch(store: DispatcherStore, api: TickTickApi, opts: { forceNotify?: boolean } = {}): Promise<DispatchResult> {
   const cfg = await store.load()
   const today = localDateString()
   const notifies: NotifyResult[] = []
@@ -100,7 +118,7 @@ export async function doDispatch(store: DispatcherStore, api: TickTickApi): Prom
       ok: false,
       message: '插件已禁用（enabled=false），本次派发跳过。',
       dispatchedAt: new Date().toISOString(), projectName: cfg.projectName, projectId: cfg.projectId ?? '',
-      taskCount: 0, tasks: [], taskFile: cfg.taskFile, notifies,
+      taskCount: 0, tasks: [], taskFile: cfg.taskFile, notifies, changed: false, notified: false,
     }
   }
 
@@ -120,7 +138,15 @@ export async function doDispatch(store: DispatcherStore, api: TickTickApi): Prom
     }))
     .sort((a, b) => a.dueDate.localeCompare(b.dueDate))
 
-  // Write the today-tasks file.
+  // Change detection: compare the new task-title set against the last one.
+  // A scheduled pull that finds nothing new stays silent (no flomo/mac spam);
+  // a manual run forces a notify.
+  const titles = selected.map((t) => t.title)
+  const signature = JSON.stringify([...titles].sort())
+  const lastSig = JSON.stringify([...cfg.lastTaskTitles].sort())
+  const changed = signature !== lastSig
+
+  // Write the today-tasks file (always refreshed so the agent has current tasks).
   const taskFile = cfg.taskFile
   await mkdir(path.dirname(taskFile), { recursive: true })
   const lines = selected.map((t) =>
@@ -137,23 +163,39 @@ export async function doDispatch(store: DispatcherStore, api: TickTickApi): Prom
   ].join('\n')
   await writeFile(taskFile, head + '\n')
 
-  // Notify (best-effort).
-  if (cfg.notifyFlomo) {
-    const body = [
-      `📋 今日派发 · ${today} · 「${projectName}」共 ${selected.length} 项待执行`,
-      ...selected.slice(0, 12).map((t) => `- ${t.title}`),
-    ].join('\n')
-    notifies.push(await flomoMemo(body, cfg.flomoTag))
-  }
-  if (cfg.notifyMac) {
-    notifies.push(await macNotify('DSH 任务派发', projectName, `今日 ${selected.length} 项任务待执行（${today}）`))
+  // Notify (best-effort) — only when there is work to report (count > 0) AND
+  // the set changed or a manual run forced it. Avoids spamming "0 项" or
+  // repeating the same list every interval.
+  const shouldNotify = (opts.forceNotify === true || changed) && selected.length > 0
+  const notified = shouldNotify && (cfg.notifyFlomo || cfg.notifyMac)
+  if (shouldNotify) {
+    if (cfg.notifyFlomo) {
+      const body = [
+        `📋 今日派发 · ${today} · 「${projectName}」共 ${selected.length} 项待执行`,
+        ...selected.slice(0, 12).map((t) => `- ${t.title}`),
+      ].join('\n')
+      notifies.push(await flomoMemo(body, cfg.flomoTag))
+    }
+    if (cfg.notifyMac) {
+      notifies.push(await macNotify('DSH 任务派发', projectName, `今日 ${selected.length} 项任务待执行（${today}）`))
+    }
   }
 
-  await store.recordDispatch(selected.map((t) => t.title))
+  await store.recordDispatch(titles)
 
+  let extra = ''
+  if (selected.length === 0) {
+    extra = '，今日无待执行任务（未发送通知）'
+  } else if (!shouldNotify) {
+    extra = '，任务无变化，跳过通知'
+  } else if (notified) {
+    extra = '，已发送通知'
+  } else {
+    extra = '，通知未发送（flomo/macOS 均未配置）'
+  }
   return {
     ok: true,
-    message: `已派发 ${selected.length} 项任务（来源「${projectName}」），今日任务文件已写入 ${taskFile}。`,
+    message: `已拉取 ${selected.length} 项任务（来源「${projectName}」），今日任务文件已写入 ${taskFile}${extra}。`,
     dispatchedAt: new Date().toISOString(),
     projectName,
     projectId,
@@ -161,5 +203,7 @@ export async function doDispatch(store: DispatcherStore, api: TickTickApi): Prom
     tasks: selected,
     taskFile,
     notifies,
+    changed,
+    notified,
   }
 }
