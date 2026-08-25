@@ -20,6 +20,13 @@ export const DEFAULT_CONFIG_FILE = path.join(homedir(), '.dsh', 'dsh-task-dispat
 /** Default workspace task file written on each dispatch. */
 export const DEFAULT_TASK_FILE = path.join(homedir(), '.dsh', 'dsh-task-dispatcher', 'today-tasks.md')
 
+/** Default worker prompt template ({title}/{content} replaced per task). */
+export const DEFAULT_WORKER_PROMPT =
+  '你是 DeepSeek Harness 的独立任务执行会话。请用你手头的基础工具（bash/读写文件/glob/grep/网络/目标工具）执行下面这一项任务：\n\n' +
+  '任务：{title}\n' +
+  '说明：{content}\n\n' +
+  '要求：聚焦完成这一项即可；完成后在回复末尾单独输出一行：DONE'
+
 /** Test override for the config location. */
 export function configPath(): string {
   const override = process.env.DSH_TASK_DISPATCHER_CONFIG
@@ -57,6 +64,14 @@ export interface DispatcherConfig {
   lastTaskCount: number
   /** Titles of the tasks in the last dispatch (for the status view). */
   lastTaskTitles: string[]
+  /** Auto-execute each pulled task in its own headless DSH session. */
+  autoExecute: boolean
+  /** Minutes before re-attempting a task whose worker failed (retry cooldown). */
+  retryCooldownMinutes: number
+  /** Worker prompt template; {title}/{content} replaced per task. */
+  workerPrompt: string
+  /** TaskId -> ISO time of last auto-execute attempt (avoids re-spawning). */
+  attempted: Record<string, string>
 }
 
 /** Public, secret-free status view. */
@@ -76,6 +91,9 @@ export interface DispatcherConfigView {
   lastDispatchAt: string
   lastTaskCount: number
   lastTaskTitles: string[]
+  autoExecute: boolean
+  retryCooldownMinutes: number
+  workerPrompt: string
   configPath: string
 }
 
@@ -96,6 +114,10 @@ function defaults(): DispatcherConfig {
     lastDispatchAt: '',
     lastTaskCount: 0,
     lastTaskTitles: [],
+    autoExecute: false,
+    retryCooldownMinutes: 60,
+    workerPrompt: DEFAULT_WORKER_PROMPT,
+    attempted: {},
   }
 }
 
@@ -121,6 +143,12 @@ function parse(raw: unknown): DispatcherConfig {
     lastDispatchAt: str(record.lastDispatchAt, ''),
     lastTaskCount: num(record.lastTaskCount, 0),
     lastTaskTitles: Array.isArray(record.lastTaskTitles) ? record.lastTaskTitles.filter((t): t is string => typeof t === 'string') : [],
+    autoExecute: bool(record.autoExecute, d.autoExecute),
+    retryCooldownMinutes: clampInt(num(record.retryCooldownMinutes, d.retryCooldownMinutes), 1, 24 * 60),
+    workerPrompt: str(record.workerPrompt, d.workerPrompt),
+    attempted: typeof record.attempted === 'object' && record.attempted !== null
+      ? Object.fromEntries(Object.entries(record.attempted as Record<string, unknown>).filter(([, v]) => typeof v === 'string')) as Record<string, string>
+      : {},
   }
 }
 
@@ -172,6 +200,9 @@ export class DispatcherStore {
       lastDispatchAt: cfg.lastDispatchAt,
       lastTaskCount: cfg.lastTaskCount,
       lastTaskTitles: cfg.lastTaskTitles,
+      autoExecute: cfg.autoExecute,
+      retryCooldownMinutes: cfg.retryCooldownMinutes,
+      workerPrompt: cfg.workerPrompt,
       configPath: configPath(),
     }
   }
@@ -191,6 +222,9 @@ export class DispatcherStore {
     if (args !== undefined && typeof args.flomoTag === 'string') next.flomoTag = args.flomoTag.trim()
     if (args !== undefined && typeof args.notifyMac === 'boolean') next.notifyMac = args.notifyMac
     if (args !== undefined && typeof args.taskFile === 'string' && args.taskFile.trim() !== '') next.taskFile = args.taskFile.trim()
+    if (args !== undefined && typeof args.autoExecute === 'boolean') next.autoExecute = args.autoExecute
+    if (args !== undefined && args.retryCooldownMinutes !== undefined) next.retryCooldownMinutes = clampInt(Number(args.retryCooldownMinutes), 1, 24 * 60)
+    if (args !== undefined && typeof args.workerPrompt === 'string' && args.workerPrompt.trim() !== '') next.workerPrompt = args.workerPrompt.trim()
     await this.save(next)
     return this.view()
   }
@@ -206,5 +240,20 @@ export class DispatcherStore {
     }
     await this.save(next)
     return this.view()
+  }
+
+  /** Mark a task id as attempted now (for auto-execute retry cooldown). */
+  async markAttempted(taskId: string): Promise<void> {
+    const cfg = await this.load()
+    await this.save({ ...cfg, attempted: { ...cfg.attempted, [taskId]: new Date().toISOString() } })
+  }
+
+  /** Re-attempt logic: whether `now` is past the retry cooldown for a task id. */
+  async canRetry(taskId: string, cooldownMinutes: number): Promise<boolean> {
+    const cfg = await this.load()
+    const attemptedAt = cfg.attempted[taskId]
+    if (attemptedAt === undefined) return true
+    const elapsed = Date.now() - new Date(attemptedAt).getTime()
+    return elapsed > cooldownMinutes * 60 * 1000
   }
 }

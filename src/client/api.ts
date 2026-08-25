@@ -20,6 +20,9 @@ export interface DispatcherConfigView {
   lastDispatchAt: string
   lastTaskCount: number
   lastTaskTitles: string[]
+  autoExecute: boolean
+  retryCooldownMinutes: number
+  workerPrompt: string
   configPath: string
 }
 

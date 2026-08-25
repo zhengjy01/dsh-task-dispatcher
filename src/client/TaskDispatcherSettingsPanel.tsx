@@ -73,6 +73,7 @@ function statusText(view: DispatcherConfigView | null): string {
     ? '已关闭定时'
     : ('每 ' + view.dispatchIntervalMinutes + ' 分钟')
   return (view.enabled ? '已启用' : '已禁用') + ' · ' + interval + ' · 来源「' + view.projectName + '」' +
+    (view.autoExecute ? ' · 自动执行' : '') +
     (view.lastDispatchAt ? ' · 上次 ' + view.lastDispatchAt + '（' + view.lastTaskCount + ' 项）' : ' · 尚未拉取')
 }
 
@@ -86,6 +87,7 @@ export function TaskDispatcherSettingsPanel(): JSX.Element {
   const [notifyFlomo, setNotifyFlomo] = useState(true)
   const [flomoTag, setFlomoTag] = useState('AI/DSH/派发')
   const [notifyMac, setNotifyMac] = useState(true)
+  const [autoExecute, setAutoExecute] = useState(false)
   const [taskFile, setTaskFile] = useState('')
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState('')
@@ -101,6 +103,7 @@ export function TaskDispatcherSettingsPanel(): JSX.Element {
       setNotifyFlomo(v.notifyFlomo)
       setFlomoTag(v.flomoTag)
       setNotifyMac(v.notifyMac)
+      setAutoExecute(v.autoExecute)
       setTaskFile(v.taskFile)
     } catch (error) {
       setMsg('读取状态失败: ' + String(error instanceof Error ? error.message : error))
@@ -132,6 +135,7 @@ export function TaskDispatcherSettingsPanel(): JSX.Element {
         notifyFlomo,
         flomoTag,
         notifyMac,
+        autoExecute,
         ...(taskFile.trim() !== '' ? { taskFile } : {}),
       })
       setView(next)
@@ -157,7 +161,8 @@ export function TaskDispatcherSettingsPanel(): JSX.Element {
       <p style={s.hint}>
         每隔一段间隔，插件会自动从滴答清单「{projectName || '来源清单'}」拉取今天到期的任务，写入今日任务文件（默认
         ~/.dsh/dsh-task-dispatcher/today-tasks.md）；<b>任务有变化时</b>才发 flomo + macOS 通知，没变化则保持安静。
-        你随手在滴答清单里加任务，插件会在下次拉取时自动带进来。下方的「上次拉取任务列表」只是最近一次拉取到的任务快照，非实时。
+        你随手在滴答清单里加任务，插件会在下次拉取时自动带进来。<b>自动执行</b>开启后，每个拉到的新任务会单独开一个 DSH
+        会话（串行，一任务一会话）去执行，成功即回写滴答清单勾掉。下方的「上次拉取任务列表」只是最近一次拉取到的任务快照，非实时。
       </p>
 
       <div style={view !== null && view.enabled ? s.status : s.statusWarn}>{statusText(view)}</div>
@@ -167,6 +172,11 @@ export function TaskDispatcherSettingsPanel(): JSX.Element {
         <input style={s.num} value={intervalMinutes} onChange={(e) => setIntervalMinutes(e.target.value)} />
         <span style={s.label}>分钟（0 = 关闭定时自动拉取）</span>
       </div>
+
+      <label style={s.check}>
+        <input type="checkbox" checked={autoExecute} onChange={(e) => setAutoExecute(e.target.checked)} />
+        自动执行（每个任务单独开一个 DSH 会话去执行，串行）
+      </label>
 
       <div style={s.row}>
         <span style={s.label}>来源清单</span>

@@ -106,6 +106,34 @@ const plusApi = { getProjects: baseApi.getProjects, getProjectData: async () => 
 const plus = await doDispatch(store, plusApi)
 check('new task added -> changed=true', plus.changed === true, plus.changed)
 
+console.log('run 6: auto-execute (1 task = 1 worker session, serial, auto-complete)')
+const { runAutoExecute } = await import('../lib/index.js')
+await store.patch({ autoExecute: true, retryCooldownMinutes: 60 })
+const executedIds = []
+const fakeSpawn = async (prompt) => {
+  executedIds.push(prompt.includes('任务X') ? 'x' : 'y')
+  if (prompt.includes('任务X')) return { ok: true, exitCode: 0, output: 'DONE', error: undefined }
+  return { ok: false, exitCode: 1, output: '', error: 'boom' }
+}
+const completedIds = []
+const fakeComplete = async (projectId, taskId) => { completedIds.push(taskId) }
+const tasksExec = [
+  { id: 'x', projectId: 'p-5ai', title: '任务X', content: 'do x', dueDate: '', priority: 0, tags: [] },
+  { id: 'y', projectId: 'p-5ai', title: '任务Y', content: 'do y', dueDate: '', priority: 0, tags: [] },
+  { id: 'z', projectId: 'p-5ai', title: '任务Z', content: 'do z', dueDate: '', priority: 0, tags: [] },
+]
+const exec = await runAutoExecute(store, { completeTask: fakeComplete }, tasksExec, { spawn: fakeSpawn })
+check('executed 3 (serial one per task)', exec.executed === 3, exec.executed)
+check('completed 1 (only the ok worker)', exec.completed === 1 && completedIds.length === 1 && completedIds[0] === 'x', JSON.stringify(completedIds))
+check('failed 2 (y/z)', exec.failed === 2, exec.failed)
+// Re-run immediately: x was completed (task gone in real flow, but here) and y/z are in cooldown -> all skipped.
+const exec2 = await runAutoExecute(store, { completeTask: fakeComplete }, tasksExec, { spawn: fakeSpawn })
+check('re-run within cooldown skips all 3', exec2.skipped === 3, JSON.stringify(exec2))
+// autoExecute off -> no-op
+await store.patch({ autoExecute: false })
+const execOff = await runAutoExecute(store, { completeTask: fakeComplete }, tasksExec, { spawn: fakeSpawn })
+check('autoExecute off -> no-op', execOff.executed === 0, execOff.executed)
+
 await rm(root, { recursive: true, force: true })
 if (failures > 0) {
   console.error('\n' + failures + ' check(s) failed')

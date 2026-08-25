@@ -24,6 +24,7 @@ export interface DispatchedTask {
   id: string
   projectId: string
   title: string
+  content: string
   dueDate: string
   priority: number
   tags: string[]
@@ -132,6 +133,7 @@ export async function doDispatch(store: DispatcherStore, api: TickTickApi, opts:
       id: t.id,
       projectId: t.projectId,
       title: t.title,
+      content: typeof t.content === 'string' ? t.content : '',
       dueDate: typeof t.dueDate === 'string' ? t.dueDate : '',
       priority: typeof t.priority === 'number' ? t.priority : 0,
       tags: Array.isArray(t.tags) ? t.tags.filter((x): x is string => typeof x === 'string') : [],

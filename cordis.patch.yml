@@ -11,6 +11,8 @@
         announceToAgent: true   # 在系统提示中公告插件（能力 + 今日任务文件路径）
         enabled: true           # 插件总开关
         dispatchIntervalMinutes: 30   # 每隔多少分钟自动从滴答清单拉取一次（0 = 关闭定时）
+        autoExecute: false      # 是否自动执行：为每个拉到的新任务单独开一个 DSH 会话去执行（串行）
+        retryCooldownMinutes: 60 # 失败任务重试冷却分钟
         projectName: "5️⃣AI"      # 任务来源清单（按名称解析）
         dueMode: "today"         # today = 今天到期/逾期；all = 全部未完成
         includeUndated: true     # 是否包含无截止日期任务
