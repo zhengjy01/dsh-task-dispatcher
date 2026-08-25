@@ -11,6 +11,7 @@ import { defineTool } from '@deepseek-ai/dsh-tools'
 import { TickTickApi } from 'dsh-ticktick'
 import type { DispatcherStore } from './store.ts'
 import { doDispatch } from './dispatch.ts'
+import { runAutoExecute } from './executor.ts'
 
 /** One text content block (the only render shape these tools emit). */
 function text(value: string): ContentBlock[] {
@@ -53,6 +54,9 @@ export function dispatcherStatusTool(ctx: ToolContext) {
           lastDispatchAt: { type: 'string' },
           lastTaskCount: { type: 'number' },
           lastTaskTitles: { type: 'array', items: { type: 'string' } },
+          autoExecute: { type: 'boolean' },
+          retryCooldownMinutes: { type: 'number' },
+          workerPrompt: { type: 'string' },
           configPath: { type: 'string' },
         },
       },
@@ -160,7 +164,7 @@ export function dispatcherConfigTool(ctx: ToolContext) {
 export function dispatcherRunTool(ctx: ToolContext) {
   return defineTool({
     name: 'dispatcher_run',
-    description: '立即执行一次任务拉取：从滴答清单「5️⃣AI」（或配置的来源）拉取今天到期的任务，写入今日任务文件，并发送 flomo + macOS 通知（手动触发始终通知）。常用于手动触发派发或验证配置。',
+    description: '立即执行一次任务拉取：从滴答清单「5️⃣AI」（或配置的来源）拉取今天到期的任务，写入今日任务文件，并发送 flomo + macOS 通知（手动触发始终通知）。若开启 autoExecute，还会为每个拉到的新任务单独开一个 DSH 会话去执行并自动勾掉。常用于手动触发派发或验证配置。',
     parameters: {},
     output: {
       schema: {
@@ -175,6 +179,8 @@ export function dispatcherRunTool(ctx: ToolContext) {
           taskFile: { type: 'string' },
           flomoNotify: { type: 'string' },
           macNotify: { type: 'string' },
+          autoExecuted: { type: 'number' },
+          autoCompleted: { type: 'number' },
         },
       },
       render: (_args: unknown, value: Record<string, unknown>) => text(String(value.message ?? '')),
@@ -182,17 +188,29 @@ export function dispatcherRunTool(ctx: ToolContext) {
     async execute() {
       try {
         const result = await doDispatch(ctx.store, ctx.api, { forceNotify: true })
+        let autoExecuted = 0
+        let autoCompleted = 0
+        if (result.ok && result.tasks.length > 0) {
+          const cfg = await ctx.store.load()
+          if (cfg.autoExecute) {
+            const exec = await runAutoExecute(ctx.store, ctx.api, result.tasks)
+            autoExecuted = exec.executed
+            autoCompleted = exec.completed
+          }
+        }
         const flomoNotify = result.notifies.find((n) => n.channel === 'flomo')
         const macNotify = result.notifies.find((n) => n.channel === 'mac')
         return {
           ok: result.ok,
-          message: result.message,
+          message: result.message + (autoExecuted > 0 ? ' 自动执行 ' + autoExecuted + ' 项，完成 ' + autoCompleted + ' 项。' : ''),
           dispatchedAt: result.dispatchedAt,
           projectName: result.projectName,
           taskCount: result.taskCount,
           taskFile: result.taskFile,
           flomoNotify: flomoNotify?.ok === true ? 'ok' : (flomoNotify === undefined ? 'none' : 'failed'),
           macNotify: macNotify?.ok === true ? 'ok' : (macNotify === undefined ? 'none' : 'failed'),
+          autoExecuted,
+          autoCompleted,
         }
       } catch (error) {
         return { ok: false, message: '派发失败: ' + String(error instanceof Error ? error.message : error) }
