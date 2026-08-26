@@ -7,8 +7,7 @@ export interface DispatcherConfigView {
     configured: boolean;
     enabled: boolean;
     announceToAgent: boolean;
-    dispatchHour: number;
-    dispatchMinute: number;
+    dispatchIntervalMinutes: number;
     projectName: string;
     projectId: string;
     dueMode: string;
@@ -20,7 +19,21 @@ export interface DispatcherConfigView {
     lastDispatchAt: string;
     lastTaskCount: number;
     lastTaskTitles: string[];
+    autoExecute: boolean;
+    retryCooldownMinutes: number;
+    workerPrompt: string;
+    workerWorkspaceId: string;
     configPath: string;
+}
+/** One DSH workspace (id + display title + directory path). */
+export interface WorkspaceInfo {
+    id: string;
+    title: string;
+    path: string;
+}
+/** Workspace list response. */
+export interface WorkspaceListResult {
+    workspaces: WorkspaceInfo[];
 }
 /** Dispatch result. */
 export interface DispatcherRunResult {
@@ -49,4 +62,6 @@ export declare class DispatcherApi {
     getStatus(): Promise<DispatcherConfigView>;
     setConfig(patch: Record<string, unknown>): Promise<DispatcherConfigView>;
     run(): Promise<DispatcherRunResult>;
+    /** List the DSH workspaces the auto-execute worker can run in. */
+    getWorkspaces(): Promise<WorkspaceInfo[]>;
 }

@@ -7,6 +7,13 @@
  * SERIALLY (one at a time) to keep cost and load predictable. After a worker
  * exits cleanly, the task is completed back in TickTick (auto-complete).
  *
+ * Worker workspace: the headless session takes its workspace from
+ * process.cwd() (meta.cwd) and the host attaches it to the DSH workspace
+ * whose directory matches — so when `workerWorkspaceId` is configured, each
+ * worker is spawned with cwd = that workspace's directory and shows up under
+ * that workspace in the GUI sidebar. Unset (or a stale id) falls back to the
+ * user's home directory.
+ *
  * Re-attempt protection: a task whose worker failed is marked attempted and
  * not re-run until the retry cooldown elapses, so a flaky task doesn't spin
  * every interval.
@@ -16,6 +23,7 @@ import { spawn } from 'node:child_process'
 import { homedir } from 'node:os'
 import type { DispatcherStore } from './store.ts'
 import type { DispatchedTask } from './dispatch.ts'
+import { resolveWorkspacePath } from './workspaces.ts'
 
 /** Outcome of one worker subprocess. */
 export interface WorkerResult {
@@ -37,11 +45,21 @@ export interface AutoExecOutcome {
 /** Worker command (dsh headless) is spawned from the user's home dir. */
 const WORKER_TIMEOUT_MS = 10 * 60 * 1000
 
+/** Options for one worker spawn. */
+export interface SpawnWorkerOptions {
+  /** Directory the worker process starts in (= the DSH workspace dir). */
+  cwd?: string
+  /** Kill the worker after this many milliseconds. */
+  timeoutMs?: number
+}
+
 /**
  * Spawn `dsh --profile headless "<prompt>"` and resolve when it exits.
  * Best-effort: never throws; resolves a WorkerResult even on spawn error.
  */
-export async function spawnWorker(prompt: string, timeoutMs = WORKER_TIMEOUT_MS): Promise<WorkerResult> {
+export async function spawnWorker(prompt: string, opts: SpawnWorkerOptions = {}): Promise<WorkerResult> {
+  const cwd = opts.cwd ?? homedir()
+  const timeoutMs = opts.timeoutMs ?? WORKER_TIMEOUT_MS
   return new Promise((resolve) => {
     let output = ''
     let stderr = ''
@@ -49,7 +67,7 @@ export async function spawnWorker(prompt: string, timeoutMs = WORKER_TIMEOUT_MS)
     let child: ReturnType<typeof spawn> | null = null
     try {
       child = spawn('dsh', ['--profile', 'headless', prompt], {
-        cwd: homedir(),
+        cwd,
         stdio: ['ignore', 'pipe', 'pipe'],
       })
     } catch (error) {
@@ -107,7 +125,10 @@ export async function runAutoExecute(
     log.push('自动执行未开启（autoExecute=false）')
     return outcome
   }
-  const spawn = opts.spawn ?? spawnWorker
+  // Resolve the configured DSH workspace once per pass; a stale/missing id
+  // yields undefined and the worker falls back to the home directory.
+  const workerCwd = cfg.workerWorkspaceId !== '' ? await resolveWorkspacePath(cfg.workerWorkspaceId) : undefined
+  const spawn = opts.spawn ?? ((prompt: string) => spawnWorker(prompt, workerCwd !== undefined ? { cwd: workerCwd } : {}))
   const onComplete = opts.onComplete ?? ((t: DispatchedTask) => api.completeTask(t.projectId, t.id))
 
   for (const task of tasks) {

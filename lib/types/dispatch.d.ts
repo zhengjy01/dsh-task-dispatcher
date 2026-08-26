@@ -19,6 +19,7 @@ export interface DispatchedTask {
     id: string;
     projectId: string;
     title: string;
+    content: string;
     dueDate: string;
     priority: number;
     tags: string[];
@@ -34,6 +35,10 @@ export interface DispatchResult {
     tasks: DispatchedTask[];
     taskFile: string;
     notifies: NotifyResult[];
+    /** True when the task set changed since the last dispatch (or a manual run forced a notify). */
+    changed: boolean;
+    /** True when at least one notify channel fired. */
+    notified: boolean;
 }
 /** Local calendar date as YYYY-MM-DD. */
 export declare function localDateString(d?: Date): string;
@@ -41,5 +46,11 @@ export declare function localDateString(d?: Date): string;
  * Run one dispatch using the given store and (optionally) an injected
  * TickTickApi (the smoke tests inject a fake). Writes the today-tasks file
  * and notifies, then records the dispatch on the store.
+ *
+ * On the scheduled interval, notify only when the task set CHANGED since the
+ * last dispatch (so a repeated pull with no new tasks stays silent). A manual
+ * `dispatcher_run` passes { forceNotify: true } to always notify.
  */
-export declare function doDispatch(store: DispatcherStore, api: TickTickApi): Promise<DispatchResult>;
+export declare function doDispatch(store: DispatcherStore, api: TickTickApi, opts?: {
+    forceNotify?: boolean;
+}): Promise<DispatchResult>;

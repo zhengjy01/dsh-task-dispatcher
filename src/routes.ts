@@ -10,12 +10,14 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { DispatcherStore } from './store.ts'
 import type { TickTickApi } from 'dsh-ticktick'
 import { doDispatch } from './dispatch.ts'
+import { listWorkspaces } from './workspaces.ts'
 
 /** Route paths. */
 export const DISPATCHER_API = {
   config: '/api/dsh-task-dispatcher/config',
   status: '/api/dsh-task-dispatcher/status',
   run: '/api/dsh-task-dispatcher/run',
+  workspaces: '/api/dsh-task-dispatcher/workspaces',
 } as const
 
 /** Cap on JSON request bodies. */
@@ -134,6 +136,14 @@ export function makeRoutes(deps: RouteContext) {
         } catch (error) {
           writeJson(res, 200, { ok: false, message: '派发失败: ' + String(error instanceof Error ? error.message : error) })
         }
+      },
+    },
+    {
+      kind: 'exact' as const,
+      path: DISPATCHER_API.workspaces,
+      handler: async (req: IncomingMessage, res: ServerResponse) => {
+        if (!guard(req, res, 'GET')) return
+        writeJson(res, 200, { workspaces: await listWorkspaces() })
       },
     },
   ]

@@ -7,7 +7,7 @@
  * snapshot. Plain React, no emoji, no external UI package — inline styles only.
  */
 import { useCallback, useEffect, useState } from 'react'
-import { DispatcherApi, type DispatcherConfigView, type DispatcherRunResult } from './api.ts'
+import { DispatcherApi, type DispatcherConfigView, type DispatcherRunResult, type WorkspaceInfo } from './api.ts'
 
 /** Module-level API client (stateless; the component closes over it). */
 const api = new DispatcherApi()
@@ -89,6 +89,8 @@ export function TaskDispatcherSettingsPanel(): JSX.Element {
   const [notifyMac, setNotifyMac] = useState(true)
   const [autoExecute, setAutoExecute] = useState(false)
   const [taskFile, setTaskFile] = useState('')
+  const [workspaces, setWorkspaces] = useState<WorkspaceInfo[]>([])
+  const [workerWorkspaceId, setWorkerWorkspaceId] = useState('')
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState('')
 
@@ -105,8 +107,16 @@ export function TaskDispatcherSettingsPanel(): JSX.Element {
       setNotifyMac(v.notifyMac)
       setAutoExecute(v.autoExecute)
       setTaskFile(v.taskFile)
+      setWorkerWorkspaceId(v.workerWorkspaceId)
     } catch (error) {
       setMsg('读取状态失败: ' + String(error instanceof Error ? error.message : error))
+    }
+    // Workspace list is loaded separately (best-effort; a read failure keeps
+    // the selector at its current value).
+    try {
+      setWorkspaces(await api.getWorkspaces())
+    } catch (error) {
+      setMsg('读取工作区列表失败: ' + String(error instanceof Error ? error.message : error))
     }
   }, [api])
 
@@ -136,6 +146,7 @@ export function TaskDispatcherSettingsPanel(): JSX.Element {
         flomoTag,
         notifyMac,
         autoExecute,
+        workerWorkspaceId,
         ...(taskFile.trim() !== '' ? { taskFile } : {}),
       })
       setView(next)
@@ -177,6 +188,19 @@ export function TaskDispatcherSettingsPanel(): JSX.Element {
         <input type="checkbox" checked={autoExecute} onChange={(e) => setAutoExecute(e.target.checked)} />
         自动执行（每个任务单独开一个 DSH 会话去执行，串行）
       </label>
+
+      <div style={s.row}>
+        <span style={s.label}>执行会话工作区</span>
+        <select style={{ ...s.input, flex: 1 }} value={workerWorkspaceId} onChange={(e) => setWorkerWorkspaceId(e.target.value)}>
+          <option value="">默认（用户主目录）</option>
+          {workspaces.map((w) => (
+            <option key={w.id} value={w.id}>{w.title}</option>
+          ))}
+        </select>
+      </div>
+      {autoExecute && workspaces.length > 0 && workerWorkspaceId === '' && (
+        <p style={s.hint}>提示：开启自动执行后，worker 会话默认在用户主目录下运行；选择上方工作区后，worker 会话会在该工作区目录下运行，并在 GUI 侧边栏归入该工作区。</p>
+      )}
 
       <div style={s.row}>
         <span style={s.label}>来源清单</span>

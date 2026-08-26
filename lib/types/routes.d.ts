@@ -13,6 +13,7 @@ export declare const DISPATCHER_API: {
     readonly config: "/api/dsh-task-dispatcher/config";
     readonly status: "/api/dsh-task-dispatcher/status";
     readonly run: "/api/dsh-task-dispatcher/run";
+    readonly workspaces: "/api/dsh-task-dispatcher/workspaces";
 };
 /** Route handler context. */
 export interface RouteContext {
@@ -31,5 +32,9 @@ export declare function makeRoutes(deps: RouteContext): ({
 } | {
     kind: "exact";
     path: "/api/dsh-task-dispatcher/run";
+    handler: (req: IncomingMessage, res: ServerResponse) => Promise<void>;
+} | {
+    kind: "exact";
+    path: "/api/dsh-task-dispatcher/workspaces";
     handler: (req: IncomingMessage, res: ServerResponse) => Promise<void>;
 })[];

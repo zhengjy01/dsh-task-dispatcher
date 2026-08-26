@@ -70,6 +70,8 @@ export interface DispatcherConfig {
   retryCooldownMinutes: number
   /** Worker prompt template; {title}/{content} replaced per task. */
   workerPrompt: string
+  /** DSH workspace id the auto-execute worker session runs in ('' = home dir). */
+  workerWorkspaceId: string
   /** TaskId -> ISO time of last auto-execute attempt (avoids re-spawning). */
   attempted: Record<string, string>
 }
@@ -94,6 +96,7 @@ export interface DispatcherConfigView {
   autoExecute: boolean
   retryCooldownMinutes: number
   workerPrompt: string
+  workerWorkspaceId: string
   configPath: string
 }
 
@@ -117,6 +120,7 @@ function defaults(): DispatcherConfig {
     autoExecute: false,
     retryCooldownMinutes: 60,
     workerPrompt: DEFAULT_WORKER_PROMPT,
+    workerWorkspaceId: '',
     attempted: {},
   }
 }
@@ -146,6 +150,7 @@ function parse(raw: unknown): DispatcherConfig {
     autoExecute: bool(record.autoExecute, d.autoExecute),
     retryCooldownMinutes: clampInt(num(record.retryCooldownMinutes, d.retryCooldownMinutes), 1, 24 * 60),
     workerPrompt: str(record.workerPrompt, d.workerPrompt),
+    workerWorkspaceId: str(record.workerWorkspaceId, ''),
     attempted: typeof record.attempted === 'object' && record.attempted !== null
       ? Object.fromEntries(Object.entries(record.attempted as Record<string, unknown>).filter(([, v]) => typeof v === 'string')) as Record<string, string>
       : {},
@@ -203,6 +208,7 @@ export class DispatcherStore {
       autoExecute: cfg.autoExecute,
       retryCooldownMinutes: cfg.retryCooldownMinutes,
       workerPrompt: cfg.workerPrompt,
+      workerWorkspaceId: cfg.workerWorkspaceId,
       configPath: configPath(),
     }
   }
@@ -225,6 +231,7 @@ export class DispatcherStore {
     if (args !== undefined && typeof args.autoExecute === 'boolean') next.autoExecute = args.autoExecute
     if (args !== undefined && args.retryCooldownMinutes !== undefined) next.retryCooldownMinutes = clampInt(Number(args.retryCooldownMinutes), 1, 24 * 60)
     if (args !== undefined && typeof args.workerPrompt === 'string' && args.workerPrompt.trim() !== '') next.workerPrompt = args.workerPrompt.trim()
+    if (args !== undefined && typeof args.workerWorkspaceId === 'string') next.workerWorkspaceId = args.workerWorkspaceId.trim()
     await this.save(next)
     return this.view()
   }

@@ -23,7 +23,20 @@ export interface DispatcherConfigView {
   autoExecute: boolean
   retryCooldownMinutes: number
   workerPrompt: string
+  workerWorkspaceId: string
   configPath: string
+}
+
+/** One DSH workspace (id + display title + directory path). */
+export interface WorkspaceInfo {
+  id: string
+  title: string
+  path: string
+}
+
+/** Workspace list response. */
+export interface WorkspaceListResult {
+  workspaces: WorkspaceInfo[]
 }
 
 /** Dispatch result. */
@@ -100,5 +113,11 @@ export class DispatcherApi {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({}),
     })
+  }
+
+  /** List the DSH workspaces the auto-execute worker can run in. */
+  async getWorkspaces(): Promise<WorkspaceInfo[]> {
+    const result = await request<WorkspaceListResult>('/api/dsh-task-dispatcher/workspaces')
+    return result.workspaces
   }
 }

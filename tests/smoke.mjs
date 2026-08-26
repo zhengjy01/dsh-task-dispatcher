@@ -4,8 +4,8 @@
  * DSH_TASK_DISPATCHER_CONFIG and a temp task-file path; disables flomo/mac
  * notify so no side effects fire.
  */
-import { mkdtemp, rm, readFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { mkdtemp, rm, readFile, writeFile, mkdir } from 'node:fs/promises'
+import { tmpdir, homedir } from 'node:os'
 import path from 'node:path'
 
 const root = await mkdtemp(path.join(tmpdir(), 'dsh-dispatcher-'))
@@ -134,7 +134,43 @@ await store.patch({ autoExecute: false })
 const execOff = await runAutoExecute(store, { completeTask: fakeComplete }, tasksExec, { spawn: fakeSpawn })
 check('autoExecute off -> no-op', execOff.executed === 0, execOff.executed)
 
+console.log('run 7: worker workspace — spawnWorker honors cwd; runAutoExecute resolves workerWorkspaceId')
+// Fake `dsh` executable that prints its cwd and fails when it is not the
+// expected workspace dir (proves the worker is spawned inside the workspace).
+const wsRoot = await mkdtemp(path.join(tmpdir(), 'dsh-ws-'))
+const wsBin = path.join(wsRoot, 'bin')
+await mkdir(wsBin, { recursive: true })
+const fakeDsh = path.join(wsBin, 'dsh')
+await writeFile(fakeDsh, '#!/bin/sh\necho "CWD=$PWD"\n[ "$PWD" = "$EXPECT_CWD" ]\n', { mode: 0o755 })
+// Workspace ledger the plugin reads (DSH_WORKSPACE_STORE override).
+const wsStoreFile = path.join(wsRoot, 'workspace.json')
+const wsDir = path.join(wsRoot, 'ws-demo')
+await mkdir(wsDir, { recursive: true })
+await writeFile(wsStoreFile, JSON.stringify({ tables: { workspaces: { 'ws-demo': { id: 'ws-demo', title: '演示工作区', path: wsDir } } } }))
+process.env.DSH_WORKSPACE_STORE = wsStoreFile
+process.env.PATH = wsBin + path.delimiter + (process.env.PATH ?? '')
+const { spawnWorker } = await import('../lib/index.js')
+// macOS /var -> /private/var symlink: the shell's $PWD is the resolved real
+// path, so compare against realpath of the cwd.
+const wsDirReal = await import('node:fs/promises').then((fs) => fs.realpath(wsDir))
+// 7a: explicit cwd flows through spawnWorker.
+process.env.EXPECT_CWD = wsDirReal
+const direct = await spawnWorker('task', { cwd: wsDir })
+check('spawnWorker honors cwd', direct.ok === true && direct.output.includes('CWD=' + wsDirReal), direct.output)
+// 7b: workerWorkspaceId resolves to the workspace dir through runAutoExecute.
+await store.patch({ autoExecute: true, retryCooldownMinutes: 60, workerWorkspaceId: 'ws-demo' })
+const wsTasks = [{ id: 'w1', projectId: 'p-5ai', title: '工作区任务', content: '', dueDate: '', priority: 0, tags: [] }]
+const execWs = await runAutoExecute(store, { completeTask: fakeComplete }, wsTasks)
+check('auto-execute worker runs in configured workspace', execWs.executed === 1 && execWs.completed === 1, JSON.stringify(execWs.log))
+// 7c: empty workspace id falls back to the home directory (fresh task id to
+// avoid the retry cooldown from 7b).
+await store.patch({ workerWorkspaceId: '' })
+process.env.EXPECT_CWD = homedir()
+const execHome = await runAutoExecute(store, { completeTask: fakeComplete }, [{ ...wsTasks[0], id: 'w2' }])
+check('empty workspace id falls back to home dir', execHome.executed === 1 && execHome.completed === 1, JSON.stringify(execHome.log))
+
 await rm(root, { recursive: true, force: true })
+await rm(wsRoot, { recursive: true, force: true })
 if (failures > 0) {
   console.error('\n' + failures + ' check(s) failed')
   process.exit(1)

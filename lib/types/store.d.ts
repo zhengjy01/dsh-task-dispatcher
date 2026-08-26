@@ -1,7 +1,7 @@
 /**
  * dsh-task-dispatcher — config store.
  *
- * Persists the dispatcher configuration (dispatch time, source TickTick
+ * Persists the dispatcher configuration (poll interval, source TickTick
  * project, filtering, notify toggles, and the last dispatch summary) to
  * ~/.dsh/dsh-task-dispatcher.json (mode 0600). Reuses the TickTick OAuth
  * credentials already stored by the dsh-ticktick plugin (~/.dsh/dsh-ticktick.json)
@@ -13,6 +13,8 @@
 export declare const DEFAULT_CONFIG_FILE: string;
 /** Default workspace task file written on each dispatch. */
 export declare const DEFAULT_TASK_FILE: string;
+/** Default worker prompt template ({title}/{content} replaced per task). */
+export declare const DEFAULT_WORKER_PROMPT: string;
 /** Test override for the config location. */
 export declare function configPath(): string;
 /** How to select tasks from the source project. */
@@ -21,10 +23,8 @@ export type DueMode = 'today' | 'all';
 export interface DispatcherConfig {
     enabled: boolean;
     announceToAgent: boolean;
-    /** Daily dispatch hour (0-23). */
-    dispatchHour: number;
-    /** Daily dispatch minute (0-59). */
-    dispatchMinute: number;
+    /** Poll interval in minutes; 0 disables the automatic pull. */
+    dispatchIntervalMinutes: number;
     /** Source TickTick list, resolved by name; falls back to projectId. */
     projectName: string;
     /** Optional explicit project id (name-resolution wins when both present). */
@@ -47,14 +47,23 @@ export interface DispatcherConfig {
     lastTaskCount: number;
     /** Titles of the tasks in the last dispatch (for the status view). */
     lastTaskTitles: string[];
+    /** Auto-execute each pulled task in its own headless DSH session. */
+    autoExecute: boolean;
+    /** Minutes before re-attempting a task whose worker failed (retry cooldown). */
+    retryCooldownMinutes: number;
+    /** Worker prompt template; {title}/{content} replaced per task. */
+    workerPrompt: string;
+    /** DSH workspace id the auto-execute worker session runs in ('' = home dir). */
+    workerWorkspaceId: string;
+    /** TaskId -> ISO time of last auto-execute attempt (avoids re-spawning). */
+    attempted: Record<string, string>;
 }
 /** Public, secret-free status view. */
 export interface DispatcherConfigView {
     configured: boolean;
     enabled: boolean;
     announceToAgent: boolean;
-    dispatchHour: number;
-    dispatchMinute: number;
+    dispatchIntervalMinutes: number;
     projectName: string;
     projectId: string;
     dueMode: DueMode;
@@ -66,6 +75,10 @@ export interface DispatcherConfigView {
     lastDispatchAt: string;
     lastTaskCount: number;
     lastTaskTitles: string[];
+    autoExecute: boolean;
+    retryCooldownMinutes: number;
+    workerPrompt: string;
+    workerWorkspaceId: string;
     configPath: string;
 }
 /**
@@ -82,4 +95,8 @@ export declare class DispatcherStore {
     patch(args: Record<string, unknown> | undefined): Promise<DispatcherConfigView>;
     /** Record a completed dispatch summary. */
     recordDispatch(titles: string[]): Promise<DispatcherConfigView>;
+    /** Mark a task id as attempted now (for auto-execute retry cooldown). */
+    markAttempted(taskId: string): Promise<void>;
+    /** Re-attempt logic: whether `now` is past the retry cooldown for a task id. */
+    canRetry(taskId: string, cooldownMinutes: number): Promise<boolean>;
 }

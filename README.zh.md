@@ -13,6 +13,7 @@
 - **今日任务文件**：每次拉取把任务写成 Markdown 清单（默认 `~/.dsh/dsh-task-dispatcher/today-tasks.md`）。
 - **有变化才通知**：`notifyFlomo`（复用 `~/.dsh/dsh-flomo.json` 凭据，标签可配置）+ `notifyMac`（osascript）；任务集无变化时保持安静，避免刷屏。
 - **自动执行（autoExecute）**：开启后，为每个拉到的新任务**单独开一个 `dsh --profile headless` 会话**（串行，一任务一会话）去执行；worker 只带基础工具（bash/文件/glob/grep/网络/目标工具）；执行成功即用 `ticktick_complete` 回写滴答清单勾掉；失败任务在重试冷却期内不重复跑。
+- **选择执行会话的工作区（workerWorkspaceId）**：默认 worker 会话在用户主目录下运行；配置某个 DSH 工作区 id 后，worker 以该工作区目录为 cwd 启动，产生的会话会在该目录下读写文件，并在 GUI 侧边栏自动归入该工作区。设置面板提供工作区下拉（列表来自 `~/.dsh/storages/workspace.json`），留空 = 默认主目录。
 - **agent 工具**：`dispatcher_status` / `dispatcher_config` / `dispatcher_run` + Web 设置面板「任务派发器」。
 
 ## 安装
@@ -31,6 +32,7 @@ dsh plugin --profile web add link:/path/to/dsh-task-dispatcher
 | `autoExecute` | 是否自动执行（每个任务单独一个 DSH 会话，串行） | `false` |
 | `retryCooldownMinutes` | 失败任务重试冷却分钟 | `60` |
 | `workerPrompt` | 执行会话提示词模板（`{title}`/`{content}`） | 内置 |
+| `workerWorkspaceId` | 执行会话运行的 DSH 工作区 id（空 = 默认主目录；见设置面板工作区下拉） | `''` |
 | `projectName` / `projectId` | 来源滴答清单 | `5️⃣AI` |
 | `dueMode` | `today`=今天到期/逾期；`all`=全部未完成 | `today` |
 | `includeUndated` | 是否包含无截止任务 | `true` |
