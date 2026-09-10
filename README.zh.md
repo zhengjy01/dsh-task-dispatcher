@@ -19,6 +19,10 @@
 ## 安装
 
 ```sh
+# from npm (published package)
+dsh plugin --profile web add dsh-task-dispatcher
+
+# or local development
 dsh plugin --profile web add link:/path/to/dsh-task-dispatcher
 # 重启 dsh web 生效
 ```

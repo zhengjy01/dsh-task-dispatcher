@@ -17,6 +17,10 @@ Use TickTick (滴答清单) as DSH's daily task dispatcher: a cordis timer pulls
 ## Install
 
 ```sh
+# from npm (published package)
+dsh plugin --profile web add dsh-task-dispatcher
+
+# or local development
 dsh plugin --profile web add link:/path/to/dsh-task-dispatcher
 # restart dsh web to activate
 ```
