@@ -52,6 +52,7 @@ export function dispatcherStatusTool(ctx: ToolContext) {
           includeUndated: { type: 'boolean' },
           notifyFlomo: { type: 'boolean' },
           flomoTag: { type: 'string' },
+          flomoStripBodyHash: { type: 'boolean' },
           notifyMac: { type: 'boolean' },
           taskFile: { type: 'string' },
           lastDispatchAt: { type: 'string' },
@@ -100,7 +101,7 @@ export function dispatcherStatusTool(ctx: ToolContext) {
 export function dispatcherConfigTool(ctx: ToolContext) {
   return defineTool({
     name: 'dispatcher_config',
-    description: '配置 dsh-task-dispatcher：enabled（总开关）、dispatchIntervalMinutes（每隔多少分钟自动拉取一次，0=关闭定时）、projectName 或 projectId（任务来源滴答清单，默认 5️⃣AI）、dueMode（today=今天到期/逾期，all=全部未完成）、includeUndated（是否含无截止任务）、notifyFlomo/notifyMac（通知开关）、flomoTag（flomo 标签）、taskFile（今日任务文件路径）、autoExecute（是否自动执行：为每个拉到的新任务单独开一个 DSH 会话去执行）、workerWorkspaceId（执行会话运行在哪个 DSH 工作区，传空字符串=默认主目录；用 dispatcher_status 可看到工作区 id）、retryCooldownMinutes（失败任务重试冷却分钟）、workerPrompt（执行会话的提示词模板，可用 {title}/{content}）、announceToAgent（是否在系统提示公告）。配置持久化到 ~/.dsh/dsh-task-dispatcher.json（0600）。传 reset: true 恢复默认。',
+    description: '配置 dsh-task-dispatcher：enabled（总开关）、dispatchIntervalMinutes（每隔多少分钟自动拉取一次，0=关闭定时）、projectName 或 projectId（任务来源滴答清单，默认 5️⃣AI）、dueMode（today=今天到期/逾期，all=全部未完成）、includeUndated（是否含无截止任务）、notifyFlomo/notifyMac（通知开关）、flomoTag（flomo 标签）、flomoStripBodyHash（派发通知发到 flomo 时是否剥掉正文里的井号#，避免 flomo 把#词误识别成标签；flomoTag 标签本身保留）、taskFile（今日任务文件路径）、autoExecute（是否自动执行：为每个拉到的新任务单独开一个 DSH 会话去执行）、workerWorkspaceId（执行会话运行在哪个 DSH 工作区，传空字符串=默认主目录；用 dispatcher_status 可看到工作区 id）、retryCooldownMinutes（失败任务重试冷却分钟）、workerPrompt（执行会话的提示词模板，可用 {title}/{content}）、announceToAgent（是否在系统提示公告）。配置持久化到 ~/.dsh/dsh-task-dispatcher.json（0600）。传 reset: true 恢复默认。',
     parameters: {
       enabled: { type: 'boolean', description: '插件总开关' },
       dispatchIntervalMinutes: { type: 'number', description: '每隔多少分钟自动拉取一次滴答清单（0 关闭定时）' },
@@ -110,6 +111,7 @@ export function dispatcherConfigTool(ctx: ToolContext) {
       includeUndated: { type: 'boolean', description: 'dueMode=today 时是否包含无截止日期任务' },
       notifyFlomo: { type: 'boolean', description: '是否推送 flomo' },
       flomoTag: { type: 'string', description: 'flomo 标签（不带 #，空格分隔）' },
+      flomoStripBodyHash: { type: 'boolean', description: '派发通知发到 flomo 时剥掉正文里的井号#（默认 true）' },
       notifyMac: { type: 'boolean', description: '是否发送 macOS 通知' },
       taskFile: { type: 'string', description: '今日任务文件路径' },
       autoExecute: { type: 'boolean', description: '是否自动执行（每个任务单独一个 DSH 会话）' },
@@ -133,6 +135,7 @@ export function dispatcherConfigTool(ctx: ToolContext) {
           includeUndated: { type: 'boolean' },
           notifyFlomo: { type: 'boolean' },
           flomoTag: { type: 'string' },
+          flomoStripBodyHash: { type: 'boolean' },
           notifyMac: { type: 'boolean' },
           taskFile: { type: 'string' },
           autoExecute: { type: 'boolean' },
@@ -149,7 +152,7 @@ export function dispatcherConfigTool(ctx: ToolContext) {
           await ctx.store.patch({
             enabled: true, announceToAgent: true, dispatchIntervalMinutes: 30,
             projectName: '5️⃣AI', projectId: '', dueMode: 'today', includeUndated: true,
-            notifyFlomo: true, flomoTag: 'AI/DSH/派发', notifyMac: true,
+            notifyFlomo: true, flomoTag: 'AI/DSH/派发', flomoStripBodyHash: true, notifyMac: true,
             taskFile: '', autoExecute: false, retryCooldownMinutes: 60,
             workerWorkspaceId: '',
           } as Record<string, unknown>)
@@ -163,7 +166,7 @@ export function dispatcherConfigTool(ctx: ToolContext) {
         const workspace = view.workerWorkspaceId === ''
           ? ''
           : ' · 工作区 ' + ((await resolveWorkspaceTitle(view.workerWorkspaceId)) ?? view.workerWorkspaceId)
-        return { ok: true, message: '配置已保存：' + (view.enabled ? '启用' : '禁用') + ' · ' + interval + auto + workspace + ' · 来源「' + view.projectName + '」', enabled: view.enabled, dispatchIntervalMinutes: view.dispatchIntervalMinutes, projectName: view.projectName, dueMode: view.dueMode, includeUndated: view.includeUndated, notifyFlomo: view.notifyFlomo, flomoTag: view.flomoTag, notifyMac: view.notifyMac, taskFile: view.taskFile, autoExecute: view.autoExecute, workerWorkspaceId: view.workerWorkspaceId, retryCooldownMinutes: view.retryCooldownMinutes, configPath: view.configPath }
+        return { ok: true, message: '配置已保存：' + (view.enabled ? '启用' : '禁用') + ' · ' + interval + auto + workspace + ' · 来源「' + view.projectName + '」', enabled: view.enabled, dispatchIntervalMinutes: view.dispatchIntervalMinutes, projectName: view.projectName, dueMode: view.dueMode, includeUndated: view.includeUndated, notifyFlomo: view.notifyFlomo, flomoTag: view.flomoTag, flomoStripBodyHash: view.flomoStripBodyHash, notifyMac: view.notifyMac, taskFile: view.taskFile, autoExecute: view.autoExecute, workerWorkspaceId: view.workerWorkspaceId, retryCooldownMinutes: view.retryCooldownMinutes, configPath: view.configPath }
       } catch (error) {
         return { ok: false, message: '配置失败: ' + String(error instanceof Error ? error.message : error) }
       }

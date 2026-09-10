@@ -54,6 +54,8 @@ export interface DispatcherConfig {
   notifyFlomo: boolean
   /** flomo tag (no leading #; space-separated allowed). */
   flomoTag: string
+  /** Strip '#' from the dispatch flomo body so inline #word isn't a tag. */
+  flomoStripBodyHash: boolean
   /** Post a macOS notification on each dispatch. */
   notifyMac: boolean
   /** Where the today-tasks file is written. */
@@ -88,6 +90,7 @@ export interface DispatcherConfigView {
   includeUndated: boolean
   notifyFlomo: boolean
   flomoTag: string
+  flomoStripBodyHash: boolean
   notifyMac: boolean
   taskFile: string
   lastDispatchAt: string
@@ -112,6 +115,7 @@ function defaults(): DispatcherConfig {
     includeUndated: true,
     notifyFlomo: true,
     flomoTag: 'AI/DSH/派发',
+    flomoStripBodyHash: true,
     notifyMac: true,
     taskFile: DEFAULT_TASK_FILE,
     lastDispatchAt: '',
@@ -142,6 +146,7 @@ function parse(raw: unknown): DispatcherConfig {
     includeUndated: bool(record.includeUndated, d.includeUndated),
     notifyFlomo: bool(record.notifyFlomo, d.notifyFlomo),
     flomoTag: str(record.flomoTag, d.flomoTag),
+    flomoStripBodyHash: bool(record.flomoStripBodyHash, d.flomoStripBodyHash),
     notifyMac: bool(record.notifyMac, d.notifyMac),
     taskFile: str(record.taskFile, d.taskFile),
     lastDispatchAt: str(record.lastDispatchAt, ''),
@@ -200,6 +205,7 @@ export class DispatcherStore {
       includeUndated: cfg.includeUndated,
       notifyFlomo: cfg.notifyFlomo,
       flomoTag: cfg.flomoTag,
+      flomoStripBodyHash: cfg.flomoStripBodyHash,
       notifyMac: cfg.notifyMac,
       taskFile: cfg.taskFile,
       lastDispatchAt: cfg.lastDispatchAt,
@@ -226,6 +232,7 @@ export class DispatcherStore {
     if (args !== undefined && typeof args.includeUndated === 'boolean') next.includeUndated = args.includeUndated
     if (args !== undefined && typeof args.notifyFlomo === 'boolean') next.notifyFlomo = args.notifyFlomo
     if (args !== undefined && typeof args.flomoTag === 'string') next.flomoTag = args.flomoTag.trim()
+    if (args !== undefined && typeof args.flomoStripBodyHash === 'boolean') next.flomoStripBodyHash = args.flomoStripBodyHash
     if (args !== undefined && typeof args.notifyMac === 'boolean') next.notifyMac = args.notifyMac
     if (args !== undefined && typeof args.taskFile === 'string' && args.taskFile.trim() !== '') next.taskFile = args.taskFile.trim()
     if (args !== undefined && typeof args.autoExecute === 'boolean') next.autoExecute = args.autoExecute

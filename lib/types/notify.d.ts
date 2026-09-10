@@ -19,6 +19,13 @@ export interface NotifyResult {
     channel: 'flomo' | 'mac';
     message: string;
 }
+/**
+ * Strip every '#' from a string. flomo parses `#word` as a tag, so a task
+ * title like `做A #重要` would spawn a stray tag; removing '#' keeps the text
+ * readable without polluting flomo's tag set. The configured flomoTag is
+ * appended separately by buildFlomoContent, so a leading '#' there survives.
+ */
+export declare function stripHash(value: string): string;
 /** Append #tags (space-separated) to a memo body, mirroring dsh-flomo. */
 export declare function buildFlomoContent(content: string, tags: string): string;
 /** Post one MEMO to flomo. Returns an outcome, never throws. */

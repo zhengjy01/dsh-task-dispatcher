@@ -24,6 +24,7 @@ import { homedir } from 'node:os'
 import type { DispatcherStore } from './store.ts'
 import type { DispatchedTask } from './dispatch.ts'
 import { resolveWorkspacePath } from './workspaces.ts'
+import { resolveExecutable } from './executable.ts'
 
 /** Outcome of one worker subprocess. */
 export interface WorkerResult {
@@ -66,7 +67,9 @@ export async function spawnWorker(prompt: string, opts: SpawnWorkerOptions = {})
     let settled = false
     let child: ReturnType<typeof spawn> | null = null
     try {
-      child = spawn('dsh', ['--profile', 'headless', prompt], {
+      // Absolute path: a launchd-started DSH has only /usr/bin:/bin on PATH,
+      // which would hide the `dsh` CLI from spawn().
+      child = spawn(resolveExecutable('dsh'), ['--profile', 'headless', prompt], {
         cwd,
         stdio: ['ignore', 'pipe', 'pipe'],
       })

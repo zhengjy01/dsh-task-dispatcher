@@ -10,7 +10,7 @@
 
 - **按间隔自动拉取**：cordis `ctx.interval` 每分钟轮询，距上次拉取超过配置间隔（分钟）就拉取一次；间隔 0 = 关闭定时；`dispatcher_run` 可随时手动拉取。
 - **任务来源**：默认滴答清单「5️⃣AI」，可按 `projectName` / `projectId` 配置；`dueMode=today` 拉「今天到期/逾期 + 无截止」，`dueMode=all` 拉全部未完成。
-- **今日任务文件**：每次拉取把任务写成 Markdown 清单（默认 `~/.dsh/dsh-task-dispatcher/today-tasks.md`）。
+- **今日任务文件**：每次拉取把任务写成 Markdown 清单（默认 `~/.dsh/dsh-task-dispatcher/today-tasks.md`）；每项任务除了标题与截止日期，还会把它在滴答清单里的**描述（备注）**以引用块形式附在标题下，agent 读文件时连同描述一起读。
 - **有变化才通知**：`notifyFlomo`（复用 `~/.dsh/dsh-flomo.json` 凭据，标签可配置）+ `notifyMac`（osascript）；任务集无变化时保持安静，避免刷屏。
 - **自动执行（autoExecute）**：开启后，为每个拉到的新任务**单独开一个 `dsh --profile headless` 会话**（串行，一任务一会话）去执行；worker 只带基础工具（bash/文件/glob/grep/网络/目标工具）；执行成功即用 `ticktick_complete` 回写滴答清单勾掉；失败任务在重试冷却期内不重复跑。
 - **选择执行会话的工作区（workerWorkspaceId）**：默认 worker 会话在用户主目录下运行；配置某个 DSH 工作区 id 后，worker 以该工作区目录为 cwd 启动，产生的会话会在该目录下读写文件，并在 GUI 侧边栏自动归入该工作区。设置面板提供工作区下拉（列表来自 `~/.dsh/storages/workspace.json`），留空 = 默认主目录。

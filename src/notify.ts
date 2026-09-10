@@ -55,6 +55,16 @@ async function flomoUrl(): Promise<string> {
   return ''
 }
 
+/**
+ * Strip every '#' from a string. flomo parses `#word` as a tag, so a task
+ * title like `做A #重要` would spawn a stray tag; removing '#' keeps the text
+ * readable without polluting flomo's tag set. The configured flomoTag is
+ * appended separately by buildFlomoContent, so a leading '#' there survives.
+ */
+export function stripHash(value: string): string {
+  return (value ?? '').replace(/#/g, '')
+}
+
 /** Append #tags (space-separated) to a memo body, mirroring dsh-flomo. */
 export function buildFlomoContent(content: string, tags: string): string {
   const body = (content ?? '').trim()

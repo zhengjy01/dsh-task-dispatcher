@@ -3,7 +3,8 @@
  *
  * A dispatch resolves the configured TickTick source project, pulls its
  * incomplete tasks, filters to today's actionable ones (due today/overdue,
- * plus undated when configured), writes a today-tasks file the agent reads,
+ * plus undated when configured), writes a today-tasks file the agent reads
+ * (each task: title + due date + its TickTick description quoted underneath),
  * and notifies (flomo + macOS). The actual task execution is done by the
  * agent in DSH using the existing dsh-ticktick tools; the file + notification
  * simply tell the agent what to work on today and write results back.

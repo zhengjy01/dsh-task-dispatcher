@@ -86,6 +86,7 @@ export function TaskDispatcherSettingsPanel(): JSX.Element {
   const [includeUndated, setIncludeUndated] = useState(true)
   const [notifyFlomo, setNotifyFlomo] = useState(true)
   const [flomoTag, setFlomoTag] = useState('AI/DSH/派发')
+  const [flomoStripBodyHash, setFlomoStripBodyHash] = useState(true)
   const [notifyMac, setNotifyMac] = useState(true)
   const [autoExecute, setAutoExecute] = useState(false)
   const [taskFile, setTaskFile] = useState('')
@@ -104,6 +105,7 @@ export function TaskDispatcherSettingsPanel(): JSX.Element {
       setIncludeUndated(v.includeUndated)
       setNotifyFlomo(v.notifyFlomo)
       setFlomoTag(v.flomoTag)
+      setFlomoStripBodyHash(v.flomoStripBodyHash)
       setNotifyMac(v.notifyMac)
       setAutoExecute(v.autoExecute)
       setTaskFile(v.taskFile)
@@ -144,6 +146,7 @@ export function TaskDispatcherSettingsPanel(): JSX.Element {
         includeUndated,
         notifyFlomo,
         flomoTag,
+        flomoStripBodyHash,
         notifyMac,
         autoExecute,
         workerWorkspaceId,
@@ -223,6 +226,13 @@ export function TaskDispatcherSettingsPanel(): JSX.Element {
         <label style={s.check}><input type="checkbox" checked={notifyFlomo} onChange={(e) => setNotifyFlomo(e.target.checked)} /> flomo</label>
         <input style={{ ...s.input, ...s.flex }} value={flomoTag} onChange={(e) => setFlomoTag(e.target.value)} placeholder="flomo 标签" />
       </div>
+      <label style={s.check}>
+        <input type="checkbox" checked={flomoStripBodyHash} onChange={(e) => setFlomoStripBodyHash(e.target.checked)} />
+        剥掉派发通知正文里的井号 #
+      </label>
+      <p style={s.hint}>
+        开启后，发到 flomo 的派发通知正文（任务标题等）会去掉「#」，避免 flomo 把 #词 误识别成标签；「{flomoTag}」标签本身仍会保留。
+      </p>
       <label style={s.check}><input type="checkbox" checked={notifyMac} onChange={(e) => setNotifyMac(e.target.checked)} /> macOS 通知</label>
 
       <div style={s.row}>

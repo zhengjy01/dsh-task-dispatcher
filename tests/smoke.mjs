@@ -31,10 +31,10 @@ const fakeApi = {
 const today = localDateString()
 // Build a set of tasks with known due dates relative to today (local date).
 const TASKS = [
-  { id: 't1', projectId: 'p-5ai', title: '今天到期', dueDate: today + 'T12:00:00.000Z', priority: 3, status: 0, tags: ['a'] },
+  { id: 't1', projectId: 'p-5ai', title: '今天到期', content: '描述第一行\n描述第二行', dueDate: today + 'T12:00:00.000Z', priority: 3, status: 0, tags: ['a'] },
   { id: 't2', projectId: 'p-5ai', title: '逾期', dueDate: '2020-01-01T00:00:00.000Z', priority: 1, status: 0 },
   { id: 't3', projectId: 'p-5ai', title: '未来', dueDate: '2099-01-01T00:00:00.000Z', priority: 0, status: 0 },
-  { id: 't4', projectId: 'p-5ai', title: '无截止', dueDate: undefined, priority: 0, status: 0 },
+  { id: 't4', projectId: 'p-5ai', title: '无截止', content: '无截止任务的描述', dueDate: undefined, priority: 0, status: 0 },
   { id: 't5', projectId: 'p-5ai', title: '已完成', dueDate: today + 'T12:00:00.000Z', priority: 0, status: 2 },
   { id: 't6', projectId: 'p-5ai', title: '过期无截止', dueDate: '', priority: 0, status: 0 },
 ]
@@ -69,6 +69,13 @@ check('selected titles', JSON.stringify(titles) === JSON.stringify(['今天到�
 check('excludes 未来', !titles.includes('未来'))
 check('excludes 已完成', !titles.includes('已完成'))
 check('task file written', (await readFile(TASK_FILE, 'utf8')).includes('今日待执行任务 · ' + today))
+const file1 = await readFile(TASK_FILE, 'utf8')
+check('task description kept in the task file (multi-line, quoted)',
+  file1.includes('- [ ] 今天到期（截止 ' + today + '）\n  > 描述第一行\n  > 描述第二行'), file1)
+check('description of an undated task kept too',
+  file1.includes('- [ ] 无截止（截止 无截止）\n  > 无截止任务的描述'), file1)
+check('task without a description stays a single line',
+  file1.includes('- [ ] 逾期（截止 2020-01-01）\n- [ ] '), file1)
 check('no notify (both disabled)', res.notifies.length === 0, res.notifies.length)
 check('recorded last dispatch', (await store.view()).lastTaskCount === 4)
 

@@ -15,6 +15,7 @@ export interface DispatcherConfigView {
   includeUndated: boolean
   notifyFlomo: boolean
   flomoTag: string
+  flomoStripBodyHash: boolean
   notifyMac: boolean
   taskFile: string
   lastDispatchAt: string

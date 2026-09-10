@@ -3,7 +3,8 @@
  *
  * A dispatch resolves the configured TickTick source project, pulls its
  * incomplete tasks, filters to today's actionable ones (due today/overdue,
- * plus undated when configured), writes a today-tasks file the agent reads,
+ * plus undated when configured), writes a today-tasks file the agent reads
+ * (each task: title + due date + its TickTick description quoted underneath),
  * and notifies (flomo + macOS). The actual task execution is done by the
  * agent in DSH using the existing dsh-ticktick tools; the file + notification
  * simply tell the agent what to work on today and write results back.
@@ -17,7 +18,7 @@ import path from 'node:path'
 import { TickTickStore, TickTickApi } from 'dsh-ticktick'
 import type { DispatcherStore } from './store.ts'
 import type { DispatcherConfig } from './store.ts'
-import { flomoMemo, macNotify, type NotifyResult } from './notify.ts'
+import { flomoMemo, macNotify, stripHash, type NotifyResult } from './notify.ts'
 
 /** One task picked for today's dispatch. */
 export interface DispatchedTask {
@@ -151,9 +152,19 @@ export async function doDispatch(store: DispatcherStore, api: TickTickApi, opts:
   // Write the today-tasks file (always refreshed so the agent has current tasks).
   const taskFile = cfg.taskFile
   await mkdir(path.dirname(taskFile), { recursive: true })
-  const lines = selected.map((t) =>
-    `- [ ] ${t.title}（截止 ${dueLabel(t.dueDate) || '无截止'}）`,
-  )
+  const lines = selected.map((t) => {
+    const head = `- [ ] ${t.title}（截止 ${dueLabel(t.dueDate) || '无截止'}）`
+    // The TickTick task description (content) is quoted under the title so the
+    // agent reads it together with the task, not just the title. Multi-line
+    // descriptions are kept line by line; blank lines become bare '>'.
+    const desc = t.content.trim()
+    if (desc === '') return head
+    const quoted = desc
+      .split(/\r?\n/)
+      .map((line) => (line.trim() === '' ? '  >' : '  > ' + line.trimEnd()))
+      .join('\n')
+    return head + '\n' + quoted
+  })
   const head = [
     `# 今日待执行任务 · ${today}`,
     '',
@@ -161,7 +172,7 @@ export async function doDispatch(store: DispatcherStore, api: TickTickApi, opts:
     '',
     ...lines,
     '',
-    '执行说明：逐项处理；完成的用 ticktick_complete 回写滴答清单，并把结果落到知识库/项目档案。',
+    '执行说明：逐项处理（任务描述以引用块附在标题下）；完成的用 ticktick_complete 回写滴答清单，并把结果落到知识库/项目档案。',
   ].join('\n')
   await writeFile(taskFile, head + '\n')
 
@@ -172,10 +183,14 @@ export async function doDispatch(store: DispatcherStore, api: TickTickApi, opts:
   const notified = shouldNotify && (cfg.notifyFlomo || cfg.notifyMac)
   if (shouldNotify) {
     if (cfg.notifyFlomo) {
-      const body = [
+      const rawBody = [
         `📋 今日派发 · ${today} · 「${projectName}」共 ${selected.length} 项待执行`,
         ...selected.slice(0, 12).map((t) => `- ${t.title}`),
       ].join('\n')
+      // flomo parses `#word` as a tag; strip '#' from the dispatch body (but
+      // keep the configured flomoTag, which is appended separately) so task
+      // titles that contain '#' don't spawn stray tags.
+      const body = cfg.flomoStripBodyHash ? stripHash(rawBody) : rawBody
       notifies.push(await flomoMemo(body, cfg.flomoTag))
     }
     if (cfg.notifyMac) {

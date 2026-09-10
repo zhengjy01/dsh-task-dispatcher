@@ -37,6 +37,8 @@ export interface DispatcherConfig {
     notifyFlomo: boolean;
     /** flomo tag (no leading #; space-separated allowed). */
     flomoTag: string;
+    /** Strip '#' from the dispatch flomo body so inline #word isn't a tag. */
+    flomoStripBodyHash: boolean;
     /** Post a macOS notification on each dispatch. */
     notifyMac: boolean;
     /** Where the today-tasks file is written. */
@@ -70,6 +72,7 @@ export interface DispatcherConfigView {
     includeUndated: boolean;
     notifyFlomo: boolean;
     flomoTag: string;
+    flomoStripBodyHash: boolean;
     notifyMac: boolean;
     taskFile: string;
     lastDispatchAt: string;
