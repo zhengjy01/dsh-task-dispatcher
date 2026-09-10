@@ -16,6 +16,10 @@
 - **选择执行会话的工作区（workerWorkspaceId）**：默认 worker 会话在用户主目录下运行；配置某个 DSH 工作区 id 后，worker 以该工作区目录为 cwd 启动，产生的会话会在该目录下读写文件，并在 GUI 侧边栏自动归入该工作区。设置面板提供工作区下拉（列表来自 `~/.dsh/storages/workspace.json`），留空 = 默认主目录。
 - **agent 工具**：`dispatcher_status` / `dispatcher_config` / `dispatcher_run` + Web 设置面板「任务派发器」。
 
+## 兼容性
+
+要求 **DeepSeek Harness ≥ 0.1.5-rc.1**（已在包清单的 `dsh.engines.dsh` 中声明，DSH 插件市场据此显示兼容版本），并已在 **0.1.5-rc.1** 上实测通过。本构建包含 DSH 0.1.5 的适配：工具结果的严格校验契约（lossless-JSON 快照、`additionalProperties: false` 的 schema 校验、`output.render` 必须返回 `ContentBlock[]`），以及不依赖宿主 PATH 的可执行文件解析（launchd 托管的宿主 `PATH` 只有 `/usr/bin:/bin`）。
+
 ## 安装
 
 ```sh

@@ -14,6 +14,10 @@ Use TickTick (滴答清单) as DSH's daily task dispatcher: a cordis timer pulls
 - **Worker workspace (workerWorkspaceId)**: the auto-execute worker session runs in the user's home dir by default; set a DSH workspace id and the worker spawns with cwd = that workspace's directory, so files are written there and the produced session shows up under that workspace in the GUI sidebar. The settings panel provides a workspace dropdown (list read from `~/.dsh/storages/workspace.json`); empty = home dir.
 - **Agent tools**: `dispatcher_status` / `dispatcher_config` / `dispatcher_run` / `dispatcher_report` + a Web settings panel.
 
+## Compatibility
+
+Requires **DeepSeek Harness ≥ 0.1.5-rc.1** (declared as `dsh.engines.dsh` in the package manifest, so the DSH plugin marketplace can report it) and is verified against **0.1.5-rc.1**. This build carries the DSH 0.1.5 adaptations: the strict tool-result contract (lossless-JSON snapshot, `additionalProperties: false` schema validation, and `output.render` returning `ContentBlock[]`) plus executable resolution that survives a launchd-started host whose `PATH` is only `/usr/bin:/bin`.
+
 ## Install
 
 ```sh
