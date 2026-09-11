@@ -49,7 +49,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/zhengjy01/dsh-task-dispatcher"
+    "url": "git+https://github.com/zhengjy01/dsh-task-dispatcher.git"
   },
   "engines": {
     "node": "^22.19.0 || >=24.0.0"
