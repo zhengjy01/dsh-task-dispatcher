@@ -6,6 +6,23 @@
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-09-11
+
+### 修复 (Fixed)
+
+- fix(release): dry-run 不再触发真实 registry 校验；CHANGELOG peer 摘要只列 dsh 包
+
+### 其它 (Changed)
+
+- chore(release): 版本纪律工具链（release.mjs / RELEASE.md / CHANGELOG）
+
+### 兼容性 (Compatibility)
+
+- DSH：`>=0.1.5-rc.1`
+- Node：`^22.19.0 || >=24.0.0`
+- DSH peer：^0.1.0-rc.6 || ^0.1.1-rc.1 || ^0.1.2-alpha.1 || ^0.1.5-rc.1
+- 运行时依赖：`dsh-ticktick@^0.1.4`
+
 ## [0.1.4] - 2026-09-11
 
 ### 其它 (Changed)
