@@ -79,7 +79,7 @@ export function dispatcherStatusTool(ctx: ToolContext) {
           '自动执行：' + (view.autoExecute ? '开（每任务一个 DSH 会话，串行）' : '关'),
           '执行会话工作区：' + workerWorkspace,
           '任务来源：滴答清单「' + view.projectName + '」',
-          '过滤：' + (view.dueMode === 'all' ? '全部未完成' : '今天到期/逾期' + (view.includeUndated ? ' + 无截止' : '')),
+          '过滤：' + (view.dueMode === 'all' ? '全部未完成' : '今天到期/逾期' + (view.includeUndated ? ' + 无截止' : '') + ' + 进行中窗口任务（开始日已到、截止日未到；仅提示不自动执行）'),
           '通知：' + [view.notifyFlomo ? 'flomo' : '', view.notifyMac ? 'macOS' : ''].filter(Boolean).join('+') || '无',
           '今日任务文件：' + view.taskFile,
         ]
@@ -178,7 +178,7 @@ export function dispatcherConfigTool(ctx: ToolContext) {
 export function dispatcherRunTool(ctx: ToolContext) {
   return defineTool({
     name: 'dispatcher_run',
-    description: '立即执行一次任务拉取：从滴答清单「5️⃣AI」（或配置的来源）拉取今天到期的任务，写入今日任务文件，并发送 flomo + macOS 通知（手动触发始终通知）。若开启 autoExecute，还会为每个拉到的新任务单独开一个 DSH 会话去执行并自动勾掉。常用于手动触发派发或验证配置。',
+    description: '立即执行一次任务拉取：从滴答清单「5️⃣AI」（或配置的来源）拉取今天相关的任务（今天到期/逾期 + 无截止 + 开始日已到的「进行中」窗口任务），写入今日任务文件，并发送 flomo + macOS 通知（手动触发始终通知）。若开启 autoExecute，只为**今天到期/逾期**的项单独开一个 DSH 会话去执行并自动勾掉；标「进行中」的窗口任务仅列出、不自动执行。常用于手动触发派发或验证配置。',
     parameters: {},
     output: {
       schema: {

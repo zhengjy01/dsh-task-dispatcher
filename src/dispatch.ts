@@ -2,12 +2,18 @@
  * dsh-task-dispatcher — the dispatch core.
  *
  * A dispatch resolves the configured TickTick source project, pulls its
- * incomplete tasks, filters to today's actionable ones (due today/overdue,
- * plus undated when configured), writes a today-tasks file the agent reads
- * (each task: title + due date + its TickTick description quoted underneath),
- * and notifies (flomo + macOS). The actual task execution is done by the
- * agent in DSH using the existing dsh-ticktick tools; the file + notification
- * simply tell the agent what to work on today and write results back.
+ * incomplete tasks, filters to today's relevant ones, writes a today-tasks
+ * file the agent reads (each task: title + due date + its TickTick description
+ * quoted underneath), and notifies (flomo + macOS). The actual task execution
+ * is done by the agent in DSH using the existing dsh-ticktick tools; the file
+ * + notification simply tell the agent what to work on today and write results
+ * back.
+ *
+ * 「今天相关」有两条独立判据，刻意分开（拉取按窗口、执行按截止）：
+ * - **拉取**：`dueDate <= today`（到期/逾期）**或** `startDate <= today`
+ *   （时间段任务已进窗口——TickTick 的「今天」包含这些，旧版只比 dueDate 会漏掉）。
+ * - **自动执行**：只有到期/逾期任务可以跑；窗口任务只进文件 + 通知，
+ *   因为「开始日到了」只代表可以开始，不代表今天该做完。
  *
  * Reuses the dsh-ticktick data layer (TickTickStore + TickTickApi) so the
  * same OAuth token drives everything — no duplicate credentials.
@@ -27,6 +33,20 @@ export interface DispatchedTask {
   title: string
   content: string
   dueDate: string
+  /** 开始日（时间段任务起点）；空串表示任务没有开始日。 */
+  startDate: string
+  /**
+   * 是否可以「现在就自动执行」。
+   *
+   * 判定与「是否拉取」刻意分开（拉取按窗口、执行按截止）：
+   * - true  = 今天到期/逾期（或配置放行的无截止任务）→ autoExecute 会跑
+   * - false = 窗口任务（开始日已到、截止日未到）→ 只进今日任务文件 + 通知，
+   *   交给 agent 判断该不该提前动，绝不自动执行
+   *
+   * 原因：「观察后真删 X」这类任务的开始日就是今天、截止日在两周后，
+   * 按开始日自动执行会在当天就做出不可逆的删除。
+   */
+  actionable: boolean
   priority: number
   tags: string[]
 }
@@ -73,8 +93,41 @@ function dueThisDay(dueDate: string | undefined, today: string): boolean {
   return local !== null && local <= today
 }
 
-/** Does a task qualify for today's dispatch? */
-function taskQualifies(task: { dueDate?: string }, cfg: DispatcherConfig, today: string): boolean {
+/** Whether a startDate has already arrived (start <= today, local calendar date compare). */
+function startsByThisDay(startDate: string | undefined, today: string): boolean {
+  if (typeof startDate !== 'string' || startDate === '') return false
+  const local = localDateOf(startDate)
+  return local !== null && local <= today
+}
+
+/**
+ * Does a task qualify for today's dispatch (i.e. should it be PULLED)?
+ *
+ * Two independent ways in:
+ * 1. 到期：dueDate <= today（今天到期/逾期）。
+ * 2. 进窗口：startDate <= today —— 滴答清单的「时间段任务」只要开始日到了，
+ *    TickTick 就算它今天的事，派发器必须一起拉，否则「今天开始的活」永远
+ *    不会被看见（2026-09-11 的 bug：旧判据只比 dueDate，漏了 startDate）。
+ *
+ * 注意：拉进来 ≠ 可以自动执行，能不能跑由 {@link taskIsActionable} 决定。
+ */
+function taskQualifies(task: { dueDate?: string; startDate?: string }, cfg: DispatcherConfig, today: string): boolean {
+  if (cfg.dueMode === 'all') return true
+  if (typeof task.dueDate === 'string' && task.dueDate !== '') {
+    if (dueThisDay(task.dueDate, today)) return true
+    return startsByThisDay(task.startDate, today)
+  }
+  // 无截止：由 includeUndated 放行；开始日已到的时间段任务同样放行。
+  return cfg.includeUndated || startsByThisDay(task.startDate, today)
+}
+
+/**
+ * May this task be auto-executed right now?（「拉取按窗口、执行按截止」）
+ *
+ * 只有 dueDate <= today 的到期/逾期任务才允许 autoExecute；窗口任务
+ * （开始日已到、截止日未到）只通知不执行。无截止任务沿用 includeUndated。
+ */
+function taskIsActionable(task: { dueDate?: string; startDate?: string }, cfg: DispatcherConfig, today: string): boolean {
   if (cfg.dueMode === 'all') return true
   if (typeof task.dueDate === 'string' && task.dueDate !== '') return dueThisDay(task.dueDate, today)
   return cfg.includeUndated
@@ -136,6 +189,8 @@ export async function doDispatch(store: DispatcherStore, api: TickTickApi, opts:
       title: t.title,
       content: typeof t.content === 'string' ? t.content : '',
       dueDate: typeof t.dueDate === 'string' ? t.dueDate : '',
+      startDate: typeof t.startDate === 'string' ? t.startDate : '',
+      actionable: taskIsActionable(t, cfg, today),
       priority: typeof t.priority === 'number' ? t.priority : 0,
       tags: Array.isArray(t.tags) ? t.tags.filter((x): x is string => typeof x === 'string') : [],
     }))
@@ -153,7 +208,10 @@ export async function doDispatch(store: DispatcherStore, api: TickTickApi, opts:
   const taskFile = cfg.taskFile
   await mkdir(path.dirname(taskFile), { recursive: true })
   const lines = selected.map((t) => {
-    const head = `- [ ] ${t.title}（截止 ${dueLabel(t.dueDate) || '无截止'}）`
+    // 「进行中」= 窗口任务（开始日已到、截止日未到）：只提示、不自动执行。
+    const head = t.actionable
+      ? `- [ ] ${t.title}（截止 ${dueLabel(t.dueDate) || '无截止'}）`
+      : `- [ ] ${t.title}（进行中 · 截止 ${dueLabel(t.dueDate) || '无截止'}）`
     // The TickTick task description (content) is quoted under the title so the
     // agent reads it together with the task, not just the title. Multi-line
     // descriptions are kept line by line; blank lines become bare '>'.
@@ -165,14 +223,18 @@ export async function doDispatch(store: DispatcherStore, api: TickTickApi, opts:
       .join('\n')
     return head + '\n' + quoted
   })
+  const windowCount = selected.filter((t) => !t.actionable).length
   const head = [
     `# 今日待执行任务 · ${today}`,
     '',
-    `**来源**：滴答清单「${projectName}」 · 共 ${selected.length} 项`,
+    `**来源**：滴答清单「${projectName}」 · 共 ${selected.length} 项` +
+    (windowCount > 0 ? `（其中 ${windowCount} 项为「进行中」窗口任务：开始日已到、截止日未到）` : ''),
     '',
     ...lines,
     '',
     '执行说明：逐项处理（任务描述以引用块附在标题下）；完成的用 ticktick_complete 回写滴答清单，并把结果落到知识库/项目档案。',
+    '',
+    '自动执行范围：只有「今天到期/逾期（+ 无截止）」的任务会被 autoExecute 执行；标「进行中」的窗口任务仅在此列出、不自动执行——开始日到了只代表「可以开始」，不代表「今天必须做完」（例：「观察后真删」要等观察期结束）。',
   ].join('\n')
   await writeFile(taskFile, head + '\n')
 
@@ -185,7 +247,8 @@ export async function doDispatch(store: DispatcherStore, api: TickTickApi, opts:
     if (cfg.notifyFlomo) {
       const rawBody = [
         `📋 今日派发 · ${today} · 「${projectName}」共 ${selected.length} 项待执行`,
-        ...selected.slice(0, 12).map((t) => `- ${t.title}`),
+        ...selected.slice(0, 12).map((t) => (t.actionable ? `- ${t.title}` : `- ${t.title}（进行中）`)),
+        ...(windowCount > 0 ? ['', `其中 ${windowCount} 项为「进行中」窗口任务（开始日已到、未到截止），仅提示、不自动执行。`] : []),
       ].join('\n')
       // flomo parses `#word` as a tag; strip '#' from the dispatch body (but
       // keep the configured flomoTag, which is appended separately) so task
@@ -212,7 +275,9 @@ export async function doDispatch(store: DispatcherStore, api: TickTickApi, opts:
   }
   return {
     ok: true,
-    message: `已拉取 ${selected.length} 项任务（来源「${projectName}」），今日任务文件已写入 ${taskFile}${extra}。`,
+    message: `已拉取 ${selected.length} 项任务（来源「${projectName}」）` +
+      (windowCount > 0 ? `，其中 ${windowCount} 项为进行中窗口任务（不自动执行）` : '') +
+      `，今日任务文件已写入 ${taskFile}${extra}。`,
     dispatchedAt: new Date().toISOString(),
     projectName,
     projectId,

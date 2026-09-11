@@ -176,6 +176,33 @@ process.env.EXPECT_CWD = homedir()
 const execHome = await runAutoExecute(store, { completeTask: fakeComplete }, [{ ...wsTasks[0], id: 'w2' }])
 check('empty workspace id falls back to home dir', execHome.executed === 1 && execHome.completed === 1, JSON.stringify(execHome.log))
 
+console.log('run 8: 窗口任务（开始日已到、截止日未到）= 拉取但不自动执行')
+const windowApi = { getProjects: async () => [{ id: 'p-5ai', name: '5️⃣AI', closed: false }], getProjectData: async () => ({ tasks: [
+  { id: 'd1', projectId: 'p-5ai', title: '今天到期', dueDate: today + 'T12:00:00.000Z', status: 0 },
+  { id: 'd2', projectId: 'p-5ai', title: '未来无开始日', dueDate: '2099-01-01T00:00:00.000Z', status: 0 },
+  { id: 'd3', projectId: 'p-5ai', title: '窗口任务', startDate: today + 'T00:00:00.000Z', dueDate: '2099-01-01T00:00:00.000Z', status: 0 },
+  { id: 'd4', projectId: 'p-5ai', title: '未开始', startDate: '2099-01-01T00:00:00.000Z', dueDate: '2099-06-01T00:00:00.000Z', status: 0 },
+] }) }
+await store.patch({ dueMode: 'today', includeUndated: false, autoExecute: false, projectName: '5️⃣AI', projectId: '' })
+const res8 = await doDispatch(store, windowApi)
+const t8 = res8.tasks.map((t) => t.title)
+check('窗口任务被拉取（startDate 已到）', t8.includes('窗口任务'), JSON.stringify(t8))
+check('未来且无开始日的任务仍被排除', !t8.includes('未来无开始日'), JSON.stringify(t8))
+check('未来才开始的任务被排除', !t8.includes('未开始'), JSON.stringify(t8))
+const w8 = res8.tasks.find((t) => t.title === '窗口任务')
+check('窗口任务 actionable=false', w8 !== undefined && w8.actionable === false, JSON.stringify(w8))
+const a8 = res8.tasks.find((t) => t.title === '今天到期')
+check('到期任务 actionable=true', a8 !== undefined && a8.actionable === true, JSON.stringify(a8))
+const file8 = await readFile(TASK_FILE, 'utf8')
+check('今日任务文件标注「进行中」', file8.includes('- [ ] 窗口任务（进行中 · 截止 2099-01-01）'), file8)
+check('今日任务文件说明不自动执行', file8.includes('标「进行中」的窗口任务仅在此列出、不自动执行'), file8)
+await store.patch({ autoExecute: true })
+const ran8 = []
+const exec8 = await runAutoExecute(store, { completeTask: async (p, id) => { ran8.push(id) } }, res8.tasks, { spawn: async () => ({ ok: true, exitCode: 0, output: 'DONE', error: undefined }) })
+check('自动执行跑到期任务', ran8.includes('d1'), JSON.stringify(ran8))
+check('自动执行跳过窗口任务（即使开始日是今天）', !ran8.includes('d3'), JSON.stringify(ran8))
+check('窗口任务计入 skipped', exec8.skipped === 1, JSON.stringify(exec8))
+
 await rm(root, { recursive: true, force: true })
 await rm(wsRoot, { recursive: true, force: true })
 if (failures > 0) {

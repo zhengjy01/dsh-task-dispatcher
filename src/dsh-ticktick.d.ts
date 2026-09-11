@@ -17,6 +17,8 @@ declare module 'dsh-ticktick' {
     title: string
     content?: string
     dueDate?: string
+    /** 开始日（时间段任务的起点；TickTick 的「今天」会收「开始=今天」的任务）。 */
+    startDate?: string
     priority?: number
     status?: number
     tags?: string[]

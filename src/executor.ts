@@ -135,6 +135,14 @@ export async function runAutoExecute(
   const onComplete = opts.onComplete ?? ((t: DispatchedTask) => api.completeTask(t.projectId, t.id))
 
   for (const task of tasks) {
+    // 「拉取按窗口、执行按截止」：窗口任务（开始日已到、截止日未到）会出现在
+    // 今日任务文件里供 agent 判断，但绝不自动执行——否则「观察后真删 X」这类
+    // 任务会在开始日当天就做出不可逆的操作。
+    if (task.actionable === false) {
+      outcome.skipped++
+      log.push('跳过「' + task.title + '」（进行中窗口任务：未到截止日，不自动执行）')
+      continue
+    }
     if (!(await store.canRetry(task.id, cfg.retryCooldownMinutes))) {
       outcome.skipped++
       log.push('跳过「' + task.title + '」（冷却期）')
