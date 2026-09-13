@@ -11,6 +11,7 @@ Use TickTick (滴答清单) as DSH's daily task dispatcher: a cordis timer pulls
 - **Today task file**: writes a Markdown checklist (default `~/.dsh/dsh-task-dispatcher/today-tasks.md`).
 - **Notify on change only**: `notifyFlomo` (reuses `~/.dsh/dsh-flomo.json`) + `notifyMac` (osascript); a repeated pull with no new tasks stays silent.
 - **Auto-execute (autoExecute)**: when on, each pulled task runs in its own `dsh --profile headless` session (serial, one task per session); success writes back to TickTick via `ticktick_complete`; failed tasks wait out the retry cooldown.
+- **Worker timeout (workerTimeoutMinutes)**: each auto-execute worker is SIGKILLed after this many minutes (default **30**, range 1–1440), configurable via `dispatcher_config` / the settings panel. It used to be a hardcoded 10 minutes, which killed long-but-healthy tasks and reported them as failures.
 - **Worker workspace (workerWorkspaceId)**: the auto-execute worker session runs in the user's home dir by default; set a DSH workspace id and the worker spawns with cwd = that workspace's directory, so files are written there and the produced session shows up under that workspace in the GUI sidebar. The settings panel provides a workspace dropdown (list read from `~/.dsh/storages/workspace.json`); empty = home dir.
 - **Agent tools**: `dispatcher_status` / `dispatcher_config` / `dispatcher_run` / `dispatcher_report` + a Web settings panel.
 

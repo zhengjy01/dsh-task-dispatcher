@@ -35,6 +35,12 @@ export interface AutoExecOutcome {
     skipped: number;
     log: string[];
 }
+/**
+ * Fallback worker timeout when no explicit `timeoutMs` is given to
+ * `spawnWorker`. The live auto-execute path always passes the configured
+ * `workerTimeoutMinutes` (default 30); this constant only covers direct calls.
+ */
+export declare const DEFAULT_WORKER_TIMEOUT_MS: number;
 /** Options for one worker spawn. */
 export interface SpawnWorkerOptions {
     /** Directory the worker process starts in (= the DSH workspace dir). */
@@ -51,13 +57,14 @@ export declare function spawnWorker(prompt: string, opts?: SpawnWorkerOptions): 
 export declare function buildWorkerPrompt(template: string, task: DispatchedTask): string;
 /**
  * Serial auto-execute over the given tasks.
- * @param opts.spawn - injectable worker spaw (tests pass a fake).
+ * @param opts.spawn - injectable worker spawn (tests pass a fake); receives the
+ *   resolved timeout so a pass can be checked without a real subprocess.
  * @param opts.onComplete - injectable "mark complete" (defaults to the TickTick
  *   API's completeTask).
  */
 export declare function runAutoExecute(store: DispatcherStore, api: {
     completeTask(projectId: string, taskId: string): Promise<void>;
 }, tasks: DispatchedTask[], opts?: {
-    spawn?: (prompt: string) => Promise<WorkerResult>;
+    spawn?: (prompt: string, opts: SpawnWorkerOptions) => Promise<WorkerResult>;
     onComplete?: (task: DispatchedTask) => Promise<void>;
 }): Promise<AutoExecOutcome>;

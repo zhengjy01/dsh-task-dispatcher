@@ -61,7 +61,10 @@
     "typecheck": "tsc --noEmit",
     "test": "node tests/smoke.mjs",
     "release": "node scripts/release.mjs",
-    "release:check": "node scripts/release.mjs --check"
+    "release:check": "node scripts/release.mjs --check",
+    "verify": "node scripts/portability.mjs --health /api/dsh-task-dispatcher/probe",
+    "verify:full": "node scripts/portability.mjs --health /api/dsh-task-dispatcher/probe --stability 30",
+    "verify:quick": "node scripts/portability.mjs --skip-audit --stability 5 --health /api/dsh-task-dispatcher/probe"
   },
   "dependencies": {
     "dsh-ticktick": "^0.1.4"

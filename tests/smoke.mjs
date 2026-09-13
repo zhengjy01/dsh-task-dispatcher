@@ -117,7 +117,9 @@ console.log('run 6: auto-execute (1 task = 1 worker session, serial, auto-comple
 const { runAutoExecute } = await import('../lib/index.js')
 await store.patch({ autoExecute: true, retryCooldownMinutes: 60 })
 const executedIds = []
-const fakeSpawn = async (prompt) => {
+let seenTimeoutMs
+const fakeSpawn = async (prompt, opts) => {
+  seenTimeoutMs = opts?.timeoutMs
   executedIds.push(prompt.includes('任务X') ? 'x' : 'y')
   if (prompt.includes('任务X')) return { ok: true, exitCode: 0, output: 'DONE', error: undefined }
   return { ok: false, exitCode: 1, output: '', error: 'boom' }
@@ -133,6 +135,7 @@ const exec = await runAutoExecute(store, { completeTask: fakeComplete }, tasksEx
 check('executed 3 (serial one per task)', exec.executed === 3, exec.executed)
 check('completed 1 (only the ok worker)', exec.completed === 1 && completedIds.length === 1 && completedIds[0] === 'x', JSON.stringify(completedIds))
 check('failed 2 (y/z)', exec.failed === 2, exec.failed)
+check('worker 超时默认 30 分钟且传给 spawn', seenTimeoutMs === 30 * 60 * 1000, seenTimeoutMs)
 // Re-run immediately: x was completed (task gone in real flow, but here) and y/z are in cooldown -> all skipped.
 const exec2 = await runAutoExecute(store, { completeTask: fakeComplete }, tasksExec, { spawn: fakeSpawn })
 check('re-run within cooldown skips all 3', exec2.skipped === 3, JSON.stringify(exec2))
@@ -141,6 +144,16 @@ await store.patch({ autoExecute: false })
 const execOff = await runAutoExecute(store, { completeTask: fakeComplete }, tasksExec, { spawn: fakeSpawn })
 check('autoExecute off -> no-op', execOff.executed === 0, execOff.executed)
 
+console.log('run 6b: worker 超时可配置（workerTimeoutMinutes）')
+await store.patch({ autoExecute: true, retryCooldownMinutes: 60, workerTimeoutMinutes: 45 })
+check('配置写入 view', (await store.view()).workerTimeoutMinutes === 45)
+let seenTimeout45
+const execT = await runAutoExecute(store, { completeTask: fakeComplete }, [
+  { id: 'to1', projectId: 'p-5ai', title: '超时任务', content: '', dueDate: '', priority: 0, tags: [] },
+], { spawn: async (_prompt, opts) => { seenTimeout45 = opts?.timeoutMs; return { ok: true, exitCode: 0, output: 'DONE', error: undefined } } })
+check('runAutoExecute 用配置的超时（45 分钟）', execT.completed === 1 && seenTimeout45 === 45 * 60 * 1000, JSON.stringify({ seenTimeout45, execT: execT.log }))
+await store.patch({ workerTimeoutMinutes: 30 })
+
 console.log('run 7: worker workspace — spawnWorker honors cwd; runAutoExecute resolves workerWorkspaceId')
 // Fake `dsh` executable that prints its cwd and fails when it is not the
 // expected workspace dir (proves the worker is spawned inside the workspace).
@@ -148,7 +161,7 @@ const wsRoot = await mkdtemp(path.join(tmpdir(), 'dsh-ws-'))
 const wsBin = path.join(wsRoot, 'bin')
 await mkdir(wsBin, { recursive: true })
 const fakeDsh = path.join(wsBin, 'dsh')
-await writeFile(fakeDsh, '#!/bin/sh\necho "CWD=$PWD"\n[ "$PWD" = "$EXPECT_CWD" ]\n', { mode: 0o755 })
+await writeFile(fakeDsh, '#!/bin/sh\necho "CWD=$PWD"\nif [ -n "$FAKE_DSH_SLEEP" ]; then sleep "$FAKE_DSH_SLEEP"; fi\n[ "$PWD" = "$EXPECT_CWD" ]\n', { mode: 0o755 })
 // Workspace ledger the plugin reads (DSH_WORKSPACE_STORE override).
 const wsStoreFile = path.join(wsRoot, 'workspace.json')
 const wsDir = path.join(wsRoot, 'ws-demo')
@@ -175,6 +188,16 @@ await store.patch({ workerWorkspaceId: '' })
 process.env.EXPECT_CWD = homedir()
 const execHome = await runAutoExecute(store, { completeTask: fakeComplete }, [{ ...wsTasks[0], id: 'w2' }])
 check('empty workspace id falls back to home dir', execHome.executed === 1 && execHome.completed === 1, JSON.stringify(execHome.log))
+// 7d: the timeout is really enforced — a slow worker is SIGKILLed at the
+// configured deadline and reported as error='timeout'.
+process.env.FAKE_DSH_SLEEP = '8'
+const t0 = Date.now()
+const timedOut = await spawnWorker('slow task', { cwd: wsDir, timeoutMs: 500 })
+const elapsed = Date.now() - t0
+delete process.env.FAKE_DSH_SLEEP
+check('spawnWorker 到点 SIGKILL（error=timeout, 提前收尾）',
+  timedOut.ok === false && timedOut.error === 'timeout' && elapsed < 5000,
+  JSON.stringify({ error: timedOut.error, elapsed }))
 
 console.log('run 8: 窗口任务（开始日已到、截止日未到）= 拉取但不自动执行')
 const windowApi = { getProjects: async () => [{ id: 'p-5ai', name: '5️⃣AI', closed: false }], getProjectData: async () => ({ tasks: [
@@ -202,6 +225,21 @@ const exec8 = await runAutoExecute(store, { completeTask: async (p, id) => { ran
 check('自动执行跑到期任务', ran8.includes('d1'), JSON.stringify(ran8))
 check('自动执行跳过窗口任务（即使开始日是今天）', !ran8.includes('d3'), JSON.stringify(ran8))
 check('窗口任务计入 skipped', exec8.skipped === 1, JSON.stringify(exec8))
+
+console.log('\nrun 9: flomo 正文井号处理（派发通知与会话汇总共用同一道出口）')
+{
+  const { escapeHashes, buildFlomoContent } = await import('../lib/index.js')
+  // 会话汇总里最典型的正文：PR 号。曾经 dispatcher_report 这条路径没做处理，
+  // 导致 flomo 把「#91 / #759 / #76」当成标签（2026-09-11 20:42 那条汇总）。
+  const escaped = escapeHashes('- PR #91 CLEAN、#759 CLEAN、#76 限流')
+  check('escapeHashes 换成全角 ＃（不删除）', escaped === '- PR ＃91 CLEAN、＃759 CLEAN、＃76 限流', escaped)
+  const memo = buildFlomoContent(escaped, 'AI/DSH/派发')
+  const body = memo.slice(0, memo.lastIndexOf('#'))
+  check('正文无半角 #', !body.includes('#'), body)
+  check('标签保留半角 #', memo.endsWith('#AI/DSH/派发'), memo)
+  const plain = buildFlomoContent(escapeHashes('干净正文'), 'AI/DSH/派发')
+  check('无井号正文不受影响', plain === '干净正文 #AI/DSH/派发', plain)
+}
 
 await rm(root, { recursive: true, force: true })
 await rm(wsRoot, { recursive: true, force: true })

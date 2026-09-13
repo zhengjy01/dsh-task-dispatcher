@@ -14,6 +14,7 @@ import { listWorkspaces } from './workspaces.ts'
 
 /** Route paths. */
 export const DISPATCHER_API = {
+  probe: '/api/dsh-task-dispatcher/probe',
   config: '/api/dsh-task-dispatcher/config',
   status: '/api/dsh-task-dispatcher/status',
   run: '/api/dsh-task-dispatcher/run',
@@ -94,6 +95,16 @@ export function makeRoutes(deps: RouteContext) {
   }
 
   return [
+    {
+      // Tiny liveness probe: the release-kit portability gate (and any external
+      // watcher) calls it to confirm the plugin really mounted. Read-only.
+      kind: 'exact' as const,
+      path: DISPATCHER_API.probe,
+      handler: (req: IncomingMessage, res: ServerResponse) => {
+        if (!guard(req, res, 'GET')) return
+        writeJson(res, 200, { ok: true, plugin: 'dsh-task-dispatcher' })
+      },
+    },
     {
       kind: 'exact' as const,
       path: DISPATCHER_API.config,

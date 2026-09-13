@@ -22,6 +22,7 @@ export interface DispatcherConfigView {
     lastTaskTitles: string[];
     autoExecute: boolean;
     retryCooldownMinutes: number;
+    workerTimeoutMinutes: number;
     workerPrompt: string;
     workerWorkspaceId: string;
     configPath: string;

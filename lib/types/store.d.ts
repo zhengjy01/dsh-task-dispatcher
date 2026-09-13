@@ -13,6 +13,8 @@
 export declare const DEFAULT_CONFIG_FILE: string;
 /** Default workspace task file written on each dispatch. */
 export declare const DEFAULT_TASK_FILE: string;
+/** Default minutes before an auto-execute worker is killed (was a hardcoded 10). */
+export declare const DEFAULT_WORKER_TIMEOUT_MINUTES = 30;
 /** Default worker prompt template ({title}/{content} replaced per task). */
 export declare const DEFAULT_WORKER_PROMPT: string;
 /** Test override for the config location. */
@@ -53,6 +55,8 @@ export interface DispatcherConfig {
     autoExecute: boolean;
     /** Minutes before re-attempting a task whose worker failed (retry cooldown). */
     retryCooldownMinutes: number;
+    /** Kill an auto-execute worker after this many minutes (default 30). */
+    workerTimeoutMinutes: number;
     /** Worker prompt template; {title}/{content} replaced per task. */
     workerPrompt: string;
     /** DSH workspace id the auto-execute worker session runs in ('' = home dir). */
@@ -80,6 +84,7 @@ export interface DispatcherConfigView {
     lastTaskTitles: string[];
     autoExecute: boolean;
     retryCooldownMinutes: number;
+    workerTimeoutMinutes: number;
     workerPrompt: string;
     workerWorkspaceId: string;
     configPath: string;

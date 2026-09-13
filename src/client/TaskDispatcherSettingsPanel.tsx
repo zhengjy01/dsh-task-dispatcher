@@ -89,6 +89,7 @@ export function TaskDispatcherSettingsPanel(): JSX.Element {
   const [flomoStripBodyHash, setFlomoStripBodyHash] = useState(true)
   const [notifyMac, setNotifyMac] = useState(true)
   const [autoExecute, setAutoExecute] = useState(false)
+  const [workerTimeoutMinutes, setWorkerTimeoutMinutes] = useState('30')
   const [taskFile, setTaskFile] = useState('')
   const [workspaces, setWorkspaces] = useState<WorkspaceInfo[]>([])
   const [workerWorkspaceId, setWorkerWorkspaceId] = useState('')
@@ -108,6 +109,7 @@ export function TaskDispatcherSettingsPanel(): JSX.Element {
       setFlomoStripBodyHash(v.flomoStripBodyHash)
       setNotifyMac(v.notifyMac)
       setAutoExecute(v.autoExecute)
+      setWorkerTimeoutMinutes(String(v.workerTimeoutMinutes))
       setTaskFile(v.taskFile)
       setWorkerWorkspaceId(v.workerWorkspaceId)
     } catch (error) {
@@ -150,6 +152,7 @@ export function TaskDispatcherSettingsPanel(): JSX.Element {
         notifyMac,
         autoExecute,
         workerWorkspaceId,
+        workerTimeoutMinutes: Number(workerTimeoutMinutes) >= 1 ? Number(workerTimeoutMinutes) : 30,
         ...(taskFile.trim() !== '' ? { taskFile } : {}),
       })
       setView(next)
@@ -206,6 +209,12 @@ export function TaskDispatcherSettingsPanel(): JSX.Element {
       )}
 
       <div style={s.row}>
+        <span style={s.label}>worker 超时</span>
+        <input style={s.num} value={workerTimeoutMinutes} onChange={(e) => setWorkerTimeoutMinutes(e.target.value)} />
+        <span style={s.label}>分钟（默认 30；到点 SIGKILL 该执行会话，1–1440）</span>
+      </div>
+
+      <div style={s.row}>
         <span style={s.label}>来源清单</span>
         <input style={{ ...s.input, ...s.flex }} value={projectName} onChange={(e) => setProjectName(e.target.value)} />
       </div>
@@ -228,10 +237,11 @@ export function TaskDispatcherSettingsPanel(): JSX.Element {
       </div>
       <label style={s.check}>
         <input type="checkbox" checked={flomoStripBodyHash} onChange={(e) => setFlomoStripBodyHash(e.target.checked)} />
-        剥掉派发通知正文里的井号 #
+        正文里的井号 # 替换成全角 ＃
       </label>
       <p style={s.hint}>
-        开启后，发到 flomo 的派发通知正文（任务标题等）会去掉「#」，避免 flomo 把 #词 误识别成标签；「{flomoTag}」标签本身仍会保留。
+        开启后，发到 flomo 的正文（派发通知的任务标题、会话汇总等）会把「#」替换成全角「＃」——看起来还是井号，但 flomo 只认半角 #，
+        因此不会再被误识别成标签（`#91` 也不会消失，仍读作「＃91」）；「{flomoTag}」标签本身仍保留半角 #。
       </p>
       <label style={s.check}><input type="checkbox" checked={notifyMac} onChange={(e) => setNotifyMac(e.target.checked)} /> macOS 通知</label>
 

@@ -56,13 +56,23 @@ async function flomoUrl(): Promise<string> {
 }
 
 /**
- * Strip every '#' from a string. flomo parses `#word` as a tag, so a task
- * title like `做A #重要` would spawn a stray tag; removing '#' keeps the text
- * readable without polluting flomo's tag set. The configured flomoTag is
- * appended separately by buildFlomoContent, so a leading '#' there survives.
+ * Full-width number sign (U+FF03). It reads as a hash mark but is a different
+ * code point from the ASCII '#', so flomo's tag parser — which matches
+ * `#word` against an ASCII hash — never turns it into a tag.
  */
-export function stripHash(value: string): string {
-  return (value ?? '').replace(/#/g, '')
+export const HASH_SAFE = '＃'
+
+/**
+ * Replace every ASCII '#' in a memo body with the full-width '＃'.
+ *
+ * flomo parses `#word` as a tag, so a raw '#' inside body text (a task title
+ * like `做A #重要`, a PR number like `#91`, a markdown heading) leaks into the
+ * tag set. Replacing rather than deleting keeps the text readable — `#91`
+ * survives as `＃91`. The configured flomoTag is appended separately by
+ * buildFlomoContent and keeps its own ASCII '#'.
+ */
+export function escapeHashes(value: string): string {
+  return (value ?? '').replace(/#/g, HASH_SAFE)
 }
 
 /** Append #tags (space-separated) to a memo body, mirroring dsh-flomo. */
@@ -72,14 +82,20 @@ export function buildFlomoContent(content: string, tags: string): string {
   return suffix !== '' ? body + ' ' + suffix : body
 }
 
-/** Post one MEMO to flomo. Returns an outcome, never throws. */
-export async function flomoMemo(content: string, tags: string): Promise<NotifyResult> {
+/**
+ * Post one MEMO to flomo. Returns an outcome, never throws.
+ *
+ * `escapeBodyHashes` (default true) is the single choke point that keeps every
+ * path into flomo free of a stray ASCII '#': the body is escaped *before* the
+ * #tag suffix is appended, so the tag keeps its hash while the body has none.
+ */
+export async function flomoMemo(content: string, tags: string, escapeBodyHashes = true): Promise<NotifyResult> {
   try {
     const url = await flomoUrl()
     if (url === '') {
       return { ok: false, channel: 'flomo', message: '尚未配置 flomo（~/.dsh/dsh-flomo.json 无 webhookUrl/apiKey），已跳过 flomo 通知。' }
     }
-    const bound = buildFlomoContent(content, tags)
+    const bound = buildFlomoContent(escapeBodyHashes ? escapeHashes(content) : content, tags)
     const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

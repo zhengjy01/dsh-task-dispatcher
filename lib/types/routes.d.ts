@@ -10,6 +10,7 @@ import type { DispatcherStore } from './store.ts';
 import type { TickTickApi } from 'dsh-ticktick';
 /** Route paths. */
 export declare const DISPATCHER_API: {
+    readonly probe: "/api/dsh-task-dispatcher/probe";
     readonly config: "/api/dsh-task-dispatcher/config";
     readonly status: "/api/dsh-task-dispatcher/status";
     readonly run: "/api/dsh-task-dispatcher/run";
@@ -22,6 +23,10 @@ export interface RouteContext {
 }
 /** Build every /api/dsh-task-dispatcher route (exact paths). */
 export declare function makeRoutes(deps: RouteContext): ({
+    kind: "exact";
+    path: "/api/dsh-task-dispatcher/probe";
+    handler: (req: IncomingMessage, res: ServerResponse) => void;
+} | {
     kind: "exact";
     path: "/api/dsh-task-dispatcher/config";
     handler: (req: IncomingMessage, res: ServerResponse) => Promise<void>;

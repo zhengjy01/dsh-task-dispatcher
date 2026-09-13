@@ -20,6 +20,9 @@ export const DEFAULT_CONFIG_FILE = path.join(homedir(), '.dsh', 'dsh-task-dispat
 /** Default workspace task file written on each dispatch. */
 export const DEFAULT_TASK_FILE = path.join(homedir(), '.dsh', 'dsh-task-dispatcher', 'today-tasks.md')
 
+/** Default minutes before an auto-execute worker is killed (was a hardcoded 10). */
+export const DEFAULT_WORKER_TIMEOUT_MINUTES = 30
+
 /** Default worker prompt template ({title}/{content} replaced per task). */
 export const DEFAULT_WORKER_PROMPT =
   '你是 DeepSeek Harness 的独立任务执行会话。请用你手头的基础工具（bash/读写文件/glob/grep/网络/目标工具）执行下面这一项任务：\n\n' +
@@ -70,6 +73,8 @@ export interface DispatcherConfig {
   autoExecute: boolean
   /** Minutes before re-attempting a task whose worker failed (retry cooldown). */
   retryCooldownMinutes: number
+  /** Kill an auto-execute worker after this many minutes (default 30). */
+  workerTimeoutMinutes: number
   /** Worker prompt template; {title}/{content} replaced per task. */
   workerPrompt: string
   /** DSH workspace id the auto-execute worker session runs in ('' = home dir). */
@@ -98,6 +103,7 @@ export interface DispatcherConfigView {
   lastTaskTitles: string[]
   autoExecute: boolean
   retryCooldownMinutes: number
+  workerTimeoutMinutes: number
   workerPrompt: string
   workerWorkspaceId: string
   configPath: string
@@ -123,6 +129,7 @@ function defaults(): DispatcherConfig {
     lastTaskTitles: [],
     autoExecute: false,
     retryCooldownMinutes: 60,
+    workerTimeoutMinutes: DEFAULT_WORKER_TIMEOUT_MINUTES,
     workerPrompt: DEFAULT_WORKER_PROMPT,
     workerWorkspaceId: '',
     attempted: {},
@@ -154,6 +161,7 @@ function parse(raw: unknown): DispatcherConfig {
     lastTaskTitles: Array.isArray(record.lastTaskTitles) ? record.lastTaskTitles.filter((t): t is string => typeof t === 'string') : [],
     autoExecute: bool(record.autoExecute, d.autoExecute),
     retryCooldownMinutes: clampInt(num(record.retryCooldownMinutes, d.retryCooldownMinutes), 1, 24 * 60),
+    workerTimeoutMinutes: clampInt(num(record.workerTimeoutMinutes, d.workerTimeoutMinutes), 1, 24 * 60),
     workerPrompt: str(record.workerPrompt, d.workerPrompt),
     workerWorkspaceId: str(record.workerWorkspaceId, ''),
     attempted: typeof record.attempted === 'object' && record.attempted !== null
@@ -213,6 +221,7 @@ export class DispatcherStore {
       lastTaskTitles: cfg.lastTaskTitles,
       autoExecute: cfg.autoExecute,
       retryCooldownMinutes: cfg.retryCooldownMinutes,
+      workerTimeoutMinutes: cfg.workerTimeoutMinutes,
       workerPrompt: cfg.workerPrompt,
       workerWorkspaceId: cfg.workerWorkspaceId,
       configPath: configPath(),
@@ -237,6 +246,7 @@ export class DispatcherStore {
     if (args !== undefined && typeof args.taskFile === 'string' && args.taskFile.trim() !== '') next.taskFile = args.taskFile.trim()
     if (args !== undefined && typeof args.autoExecute === 'boolean') next.autoExecute = args.autoExecute
     if (args !== undefined && args.retryCooldownMinutes !== undefined) next.retryCooldownMinutes = clampInt(Number(args.retryCooldownMinutes), 1, 24 * 60)
+    if (args !== undefined && args.workerTimeoutMinutes !== undefined) next.workerTimeoutMinutes = clampInt(Number(args.workerTimeoutMinutes), 1, 24 * 60)
     if (args !== undefined && typeof args.workerPrompt === 'string' && args.workerPrompt.trim() !== '') next.workerPrompt = args.workerPrompt.trim()
     if (args !== undefined && typeof args.workerWorkspaceId === 'string') next.workerWorkspaceId = args.workerWorkspaceId.trim()
     await this.save(next)

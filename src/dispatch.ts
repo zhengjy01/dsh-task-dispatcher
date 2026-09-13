@@ -24,7 +24,7 @@ import path from 'node:path'
 import { TickTickStore, TickTickApi } from 'dsh-ticktick'
 import type { DispatcherStore } from './store.ts'
 import type { DispatcherConfig } from './store.ts'
-import { flomoMemo, macNotify, stripHash, type NotifyResult } from './notify.ts'
+import { flomoMemo, macNotify, type NotifyResult } from './notify.ts'
 
 /** One task picked for today's dispatch. */
 export interface DispatchedTask {
@@ -250,11 +250,10 @@ export async function doDispatch(store: DispatcherStore, api: TickTickApi, opts:
         ...selected.slice(0, 12).map((t) => (t.actionable ? `- ${t.title}` : `- ${t.title}（进行中）`)),
         ...(windowCount > 0 ? ['', `其中 ${windowCount} 项为「进行中」窗口任务（开始日已到、未到截止），仅提示、不自动执行。`] : []),
       ].join('\n')
-      // flomo parses `#word` as a tag; strip '#' from the dispatch body (but
-      // keep the configured flomoTag, which is appended separately) so task
-      // titles that contain '#' don't spawn stray tags.
-      const body = cfg.flomoStripBodyHash ? stripHash(rawBody) : rawBody
-      notifies.push(await flomoMemo(body, cfg.flomoTag))
+      // flomo parses `#word` as a tag. flomoMemo replaces any ASCII '#' in the
+      // body with the full-width '＃' (readable, never a tag) while the
+      // configured flomoTag — appended after the body — keeps its own '#'.
+      notifies.push(await flomoMemo(rawBody, cfg.flomoTag, cfg.flomoStripBodyHash))
     }
     if (cfg.notifyMac) {
       notifies.push(await macNotify('DSH 任务派发', projectName, `今日 ${selected.length} 项任务待执行（${today}）`))

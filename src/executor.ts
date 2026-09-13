@@ -22,6 +22,7 @@
 import { spawn } from 'node:child_process'
 import { homedir } from 'node:os'
 import type { DispatcherStore } from './store.ts'
+import { DEFAULT_WORKER_TIMEOUT_MINUTES } from './store.ts'
 import type { DispatchedTask } from './dispatch.ts'
 import { resolveWorkspacePath } from './workspaces.ts'
 import { resolveExecutable } from './executable.ts'
@@ -43,8 +44,12 @@ export interface AutoExecOutcome {
   log: string[]
 }
 
-/** Worker command (dsh headless) is spawned from the user's home dir. */
-const WORKER_TIMEOUT_MS = 10 * 60 * 1000
+/**
+ * Fallback worker timeout when no explicit `timeoutMs` is given to
+ * `spawnWorker`. The live auto-execute path always passes the configured
+ * `workerTimeoutMinutes` (default 30); this constant only covers direct calls.
+ */
+export const DEFAULT_WORKER_TIMEOUT_MS = DEFAULT_WORKER_TIMEOUT_MINUTES * 60 * 1000
 
 /** Options for one worker spawn. */
 export interface SpawnWorkerOptions {
@@ -60,7 +65,7 @@ export interface SpawnWorkerOptions {
  */
 export async function spawnWorker(prompt: string, opts: SpawnWorkerOptions = {}): Promise<WorkerResult> {
   const cwd = opts.cwd ?? homedir()
-  const timeoutMs = opts.timeoutMs ?? WORKER_TIMEOUT_MS
+  const timeoutMs = opts.timeoutMs ?? DEFAULT_WORKER_TIMEOUT_MS
   return new Promise((resolve) => {
     let output = ''
     let stderr = ''
@@ -108,7 +113,8 @@ export function buildWorkerPrompt(template: string, task: DispatchedTask): strin
 
 /**
  * Serial auto-execute over the given tasks.
- * @param opts.spawn - injectable worker spaw (tests pass a fake).
+ * @param opts.spawn - injectable worker spawn (tests pass a fake); receives the
+ *   resolved timeout so a pass can be checked without a real subprocess.
  * @param opts.onComplete - injectable "mark complete" (defaults to the TickTick
  *   API's completeTask).
  */
@@ -117,7 +123,7 @@ export async function runAutoExecute(
   api: { completeTask(projectId: string, taskId: string): Promise<void> },
   tasks: DispatchedTask[],
   opts: {
-    spawn?: (prompt: string) => Promise<WorkerResult>
+    spawn?: (prompt: string, opts: SpawnWorkerOptions) => Promise<WorkerResult>
     onComplete?: (task: DispatchedTask) => Promise<void>
   } = {},
 ): Promise<AutoExecOutcome> {
@@ -131,7 +137,11 @@ export async function runAutoExecute(
   // Resolve the configured DSH workspace once per pass; a stale/missing id
   // yields undefined and the worker falls back to the home directory.
   const workerCwd = cfg.workerWorkspaceId !== '' ? await resolveWorkspacePath(cfg.workerWorkspaceId) : undefined
-  const spawn = opts.spawn ?? ((prompt: string) => spawnWorker(prompt, workerCwd !== undefined ? { cwd: workerCwd } : {}))
+  // Worker timeout is config-driven (workerTimeoutMinutes, default 30) so a
+  // task that legitimately runs longer than the old fixed 10 min is not
+  // SIGKILLed mid-flight anymore.
+  const workerTimeoutMs = cfg.workerTimeoutMinutes * 60 * 1000
+  const spawn = opts.spawn ?? spawnWorker
   const onComplete = opts.onComplete ?? ((t: DispatchedTask) => api.completeTask(t.projectId, t.id))
 
   for (const task of tasks) {
@@ -151,7 +161,10 @@ export async function runAutoExecute(
     await store.markAttempted(task.id)
     outcome.executed++
     const prompt = buildWorkerPrompt(cfg.workerPrompt, task)
-    const worker = await spawn(prompt)
+    const worker = await spawn(prompt, {
+      ...(workerCwd !== undefined ? { cwd: workerCwd } : {}),
+      timeoutMs: workerTimeoutMs,
+    })
     if (worker.ok) {
       outcome.completed++
       try {

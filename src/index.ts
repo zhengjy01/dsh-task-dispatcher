@@ -41,7 +41,8 @@ const SECTION_ORDER = 170
 /** Model-facing announcement: plugin presence, capabilities, and limits. */
 export const DISPATCHER_GUIDANCE =
   '本机已安装 dsh-task-dispatcher 插件（滴答清单任务派发器）：每隔一段可配置的间隔（默认每 30 分钟）自动从滴答清单「5️⃣AI」（或配置的来源）拉取今天到期/逾期的任务，写入今日任务文件（默认 ~/.dsh/dsh-task-dispatcher/today-tasks.md），' +
-  '并在任务发生变化时发送 flomo+macOS 通知。工具：dispatcher_status（状态）、dispatcher_config（配置拉取间隔/来源/过滤/通知/自动执行）、dispatcher_run（立即拉取一次）、dispatcher_report（执行完/会话结束后发一条 flomo 汇总）。' +
+  '并在任务发生变化时发送 flomo+macOS 通知。工具：dispatcher_status（状态）、dispatcher_config（配置拉取间隔/来源/过滤/通知/自动执行/worker 超时）、dispatcher_run（立即拉取一次）、dispatcher_report（执行完/会话结束后发一条 flomo 汇总）。' +
+  '自动执行的单个 worker 有超时保护（workerTimeoutMinutes，默认 30 分钟，到点 SIGKILL），可在设置面板或 dispatcher_config 调整。' +
   '你任务都是随手写进滴答清单的，插件会自动跟上：随时往清单里加任务，下次拉取就会带进来。' +
   '当你开始一天的工作时，先用 read 读取今日任务文件，逐项执行；完成的用 ticktick_complete 回写滴答清单，并把结果落到 Obsidian 知识库/项目档案。' +
   '每次执行完/告一段落后，调用 dispatcher_report 把本次完成/失败/跳过情况汇总（total/completed/failed/skipped + 可选 summary）发一条 flomo。' +
@@ -146,11 +147,11 @@ export function apply(ctx: Context, config?: Config): void {
 }
 
 /** Re-exports for host consumers and the smoke tests. */
-export { DispatcherStore, configPath, DEFAULT_CONFIG_FILE, DEFAULT_TASK_FILE, DEFAULT_WORKER_PROMPT, type DispatcherConfig, type DispatcherConfigView } from './store.ts'
+export { DispatcherStore, configPath, DEFAULT_CONFIG_FILE, DEFAULT_TASK_FILE, DEFAULT_WORKER_PROMPT, DEFAULT_WORKER_TIMEOUT_MINUTES, type DispatcherConfig, type DispatcherConfigView } from './store.ts'
 export { doDispatch, localDateString, type DispatchedTask, type DispatchResult } from './dispatch.ts'
-export { flomoMemo, macNotify } from './notify.ts'
+export { flomoMemo, macNotify, escapeHashes, buildFlomoContent, HASH_SAFE } from './notify.ts'
 export { dispatcherStatusTool, dispatcherConfigTool, dispatcherRunTool, dispatcherReportTool, buildTools, type ToolContext } from './tools.ts'
 export { makeRoutes, DISPATCHER_API } from './routes.ts'
-export { runAutoExecute, spawnWorker, buildWorkerPrompt, type WorkerResult, type AutoExecOutcome } from './executor.ts'
+export { runAutoExecute, spawnWorker, buildWorkerPrompt, DEFAULT_WORKER_TIMEOUT_MS, type WorkerResult, type AutoExecOutcome } from './executor.ts'
 export { listWorkspaces, resolveWorkspacePath, resolveWorkspaceTitle, workspaceStorePath, DEFAULT_WORKSPACE_STORE, type WorkspaceInfo } from './workspaces.ts'
 export { defineTool }
