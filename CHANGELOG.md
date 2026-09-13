@@ -6,6 +6,43 @@
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-13
+
+### 新增 (Added)
+
+- **延迟同步的图形化配置（设置面板）**：面板新增「延迟同步（agent → 滴答清单）」区块——此前静默阈值、检查间隔这些参数只存在于队列 JSON 与 launchd plist 里，只能用命令行改。
+  - **可看**：队列条数（顶层/子任务明细）、当前静默分钟（**全机** DSH 口径）、阈值、定时器是否在跑、上次写入时间与结果、当前用的是插件自带脚本还是本地已安装的那份。
+  - **可改**：**静默阈值**（分钟）、**单会话顶层上限**、**定时器检查间隔**（秒——改完自动重载 launchd，因为已加载的 job 不会自己重读 plist）。
+  - **可点**：「保存阈值」「立即写入」「强制写入」「重载定时器」。
+  - **控制面与执行面分离**：写入仍由独立脚本 + launchd 完成（**DSH 关着也能写**），插件只做配置与观测；两者共用同一个队列文件（`$DSH_HOME/dsh-ticktick-pending.json`），不重复实现任何写入逻辑（去重、parentId、dueDate 顺延都留在脚本里）。
+  - 新增 4 条 loopback 路由：`GET /api/dsh-task-dispatcher/deferred`、`POST .../deferred/config`、`POST .../deferred/flush`、`POST .../deferred/timer`。
+  - 脚本随包分发（`scripts/ticktick-pending.mjs`）：没有该脚本的机器可从面板一键安装并把定时器指过去。
+
+- **微信通知通道（ClawBot）**：派发通知与会话汇总可发到微信——插件把正文 POST 给本机 **DSH-WeChatClawBot** 网关的 `/send`（默认 `http://127.0.0.1:51235`），由它转发给扫码登录的那个微信。插件本身不直连微信、不存任何微信凭据。
+  - 新配置：`notifyWechat`（开关）、`wechatGatewayUrl`（网关地址，空 = 默认 51235）、`wechatTo`（接收人 id，空 = **自动识别**：读 ClawBot 状态目录里的 `accounts/<botId>.json` 的 `userId`）、`wechatStateDir`（状态目录，空 = `$DSH_WECHAT_HOME` 或 `~/.dsh-wechat`）。
+  - 接收人自动识别失败 / 网关没起 / ClawBot 未登录时，只把该通道记为失败并说明原因，**不影响派发本身**（通知永远是 best-effort）。
+  - 长正文按 1200 字符自动分条发送（微信单条文本有上限）。
+- **执行结果回执（`notifyResult`，默认开）**：派发只是开始，跑完也要说话。自动执行的每个任务在 worker 结束后**自动**推一条简明结果（`✅ 任务完成 · 标题` + 一句话结果摘要；失败则 `❌ 任务失败 · 标题` + 原因，如「执行超时（30 分钟，已 SIGKILL）」），一轮跑超过 1 项时再补一条批次汇总（完成/失败计数 + 逐项 ✅/❌）。**不依赖 worker 自己记得汇报**，走已开启的通知通道（默认微信）。
+  - 摘要正确性有依据：headless runner 只把**最终答复写 stdout**（进度/思考走 stderr），`spawnWorker` 因此把两个流分开收集，`summarizeWorkerOutput()` 取 stdout、剥 ANSI、丢空行与结尾的 `DONE` 标记、压平并截断到 220 字——微信气泡里读得完。
+  - 通知是**显式 opt-in**：`runAutoExecute` 只有调用方传 `notifyResult: true` 且配置 `notifyResult !== false` 时才发，测试/其它调用方零副作用。
+  - 新增配置 `notifyResult`（设置面板同步加开关）。
+- 新增统一出口 `notifyText(content, cfg, opts)`：派发通知、执行结果、批次汇总、会话汇总共用同一套通道语义（微信原样 / flomo 转义井号 / macOS 横幅），`channels` 可临时指定；macOS 文案可定制。
+- `dispatcher_config` 新增 `testWechat: true`：保存配置后立刻发一条测试微信，用来验证通道。
+- `dispatcher_report` 新增 `channels` 参数（`wechat`/`flomo`/`mac`），可临时指定本次发哪几路；返回值新增 `wechatNotify`。
+
+### 其它 (Changed)
+
+- 通知正文抽成一份，微信与 flomo 共用：微信原样发送（无标签解析），flomo 仍在其出口做半角 `#` → 全角 `＃` 的替换。
+- `dispatcher_run` / `dispatcher_status` 的返回值与状态文案列出微信通道与「执行结果回执」开关；`dispatcher_report` 不再写死 flomo，并改为复用 `notifyText`（含 macOS 横幅）。
+- `WorkerResult` 把 stdout / stderr 分开收集（`output` 仍是合并结果，向后兼容）。
+- 设置面板新增「微信通知」开关、ClawBot 网关地址、微信接收人输入框（留空 = 自动识别）。
+- 通知渠道默认值不变（`notifyFlomo: true`、`notifyWechat: false`），避免影响没装 ClawBot 的用户。
+
+
+### 修复 (Fixed)
+
+- **配置/缓存/账本路径认 `DSH_HOME`**：`src/store.ts`（`dsh-task-dispatcher.json`、today-tasks）、`src/workspaces.ts`（宿主 `storages/workspace.json`）、`src/notify.ts`（共享 `dsh-flomo.json`）此前用 `path.join(homedir(), '.dsh', …)` 解析——搬迁过 home 的机器（launcher / 救援胶囊）会写到错误的 `~/.dsh`，插件「丢配置」。新增共享 `src/home.ts`（`dshHome()` / `pluginPath()`），解析顺序统一为 **插件覆盖变量（`DSH_TASK_DISPATCHER_CONFIG` / `DSH_WORKSPACE_STORE`）→ `DSH_HOME` → `~/.dsh`**；路径说明/公告/描述同步补 `DSH_HOME` 口径。smoke 新增 run 11（7 项断言）。可移植性门禁静态体检的「写 `.dsh` 但不认 `DSH_HOME`」warn 消失。
+
 ## [0.2.0] - 2026-09-13
 
 ### 新增 (Added)

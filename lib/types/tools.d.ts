@@ -18,7 +18,7 @@ export declare function dispatcherStatusTool(ctx: ToolContext): import("@deepsee
 export declare function dispatcherConfigTool(ctx: ToolContext): import("@deepseek-ai/dsh-tools").ToolDefinition;
 /** Run tool: perform a dispatch now. */
 export declare function dispatcherRunTool(ctx: ToolContext): import("@deepseek-ai/dsh-tools").ToolDefinition;
-/** Report tool: send the agent/session outcome summary to flomo. */
+/** Report tool: send the agent/session outcome summary to WeChat (and/or flomo). */
 export declare function dispatcherReportTool(ctx: ToolContext): import("@deepseek-ai/dsh-tools").ToolDefinition;
 /** Build the tool list for registration. */
 export declare function buildTools(ctx: ToolContext): import("@deepseek-ai/dsh-tools").ToolDefinition[];

@@ -44,11 +44,13 @@ export interface Config {
  */
 export declare function apply(ctx: Context, config?: Config): void;
 /** Re-exports for host consumers and the smoke tests. */
+export { dshHome, pluginPath } from './home.ts';
 export { DispatcherStore, configPath, DEFAULT_CONFIG_FILE, DEFAULT_TASK_FILE, DEFAULT_WORKER_PROMPT, DEFAULT_WORKER_TIMEOUT_MINUTES, type DispatcherConfig, type DispatcherConfigView } from './store.ts';
-export { doDispatch, localDateString, type DispatchedTask, type DispatchResult } from './dispatch.ts';
-export { flomoMemo, macNotify, escapeHashes, buildFlomoContent, HASH_SAFE } from './notify.ts';
+export { doDispatch, notifyText, localDateString, type DispatchedTask, type DispatchResult, type NotifyChannel } from './dispatch.ts';
+export { flomoMemo, macNotify, wechatSend, wechatRecipient, wechatStateDir, escapeHashes, buildFlomoContent, HASH_SAFE, WECHAT_GATEWAY_URL, type WechatOptions } from './notify.ts';
 export { dispatcherStatusTool, dispatcherConfigTool, dispatcherRunTool, dispatcherReportTool, buildTools, type ToolContext } from './tools.ts';
 export { makeRoutes, DISPATCHER_API } from './routes.ts';
-export { runAutoExecute, spawnWorker, buildWorkerPrompt, DEFAULT_WORKER_TIMEOUT_MS, type WorkerResult, type AutoExecOutcome } from './executor.ts';
+export { runAutoExecute, spawnWorker, buildWorkerPrompt, summarizeWorkerOutput, DEFAULT_WORKER_TIMEOUT_MS, type WorkerResult, type TaskExecResult, type AutoExecOutcome } from './executor.ts';
 export { listWorkspaces, resolveWorkspacePath, resolveWorkspaceTitle, workspaceStorePath, DEFAULT_WORKSPACE_STORE, type WorkspaceInfo } from './workspaces.ts';
+export { DeferredController, TIMER_LABEL, bundledScriptPath, coerceQueue, defaultQueue, installedScriptPath, newestSessionMtime, queuePath, timerPlistPath, type DeferredAction, type DeferredQueue, type DeferredStatus, type TimerState, } from './deferred.ts';
 export { defineTool };

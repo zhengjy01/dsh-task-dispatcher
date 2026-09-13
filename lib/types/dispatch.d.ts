@@ -4,7 +4,7 @@
  * A dispatch resolves the configured TickTick source project, pulls its
  * incomplete tasks, filters to today's relevant ones, writes a today-tasks
  * file the agent reads (each task: title + due date + its TickTick description
- * quoted underneath), and notifies (flomo + macOS). The actual task execution
+ * quoted underneath), and notifies (WeChat via ClawBot + flomo + macOS). The actual task execution
  * is done by the agent in DSH using the existing dsh-ticktick tools; the file
  * + notification simply tell the agent what to work on today and write results
  * back.
@@ -20,6 +20,7 @@
  */
 import { TickTickApi } from 'dsh-ticktick';
 import type { DispatcherStore } from './store.ts';
+import type { DispatcherConfig } from './store.ts';
 import { type NotifyResult } from './notify.ts';
 /** One task picked for today's dispatch. */
 export interface DispatchedTask {
@@ -63,6 +64,28 @@ export interface DispatchResult {
 }
 /** Local calendar date as YYYY-MM-DD. */
 export declare function localDateString(d?: Date): string;
+/**
+ * Fan one text notification out to every enabled channel.
+ *
+ * The single choke point for "push some text at the user" (dispatch notices,
+ * per-task execution results, the auto-execute batch tally, session reports),
+ * so channel behaviour — the WeChat/ClawBot relay, flomo's ASCII-# escaping,
+ * the macOS banner — is defined once. Failures are returned per channel and
+ * never thrown: a notification must not break the work it reports on.
+ *
+ * @param content - message body (never contains a channel tag).
+ * @param cfg - dispatcher config the channel switches are read from.
+ * @param opts.channels - restrict to these channels instead of the enabled ones.
+ * @param opts.macTitle / opts.macSubtitle / opts.macBody - banner texts.
+ */
+export declare function notifyText(content: string, cfg: DispatcherConfig, opts?: {
+    channels?: NotifyChannel[];
+    macTitle?: string;
+    macSubtitle?: string;
+    macBody?: string;
+}): Promise<NotifyResult[]>;
+/** One notification channel name. */
+export type NotifyChannel = 'wechat' | 'flomo' | 'mac';
 /**
  * Run one dispatch using the given store and (optionally) an injected
  * TickTickApi (the smoke tests inject a fake). Writes the today-tasks file

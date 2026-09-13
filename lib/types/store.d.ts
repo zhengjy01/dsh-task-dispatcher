@@ -9,15 +9,15 @@
  * view() never exposes tokens. The config path can be overridden with
  * DSH_TASK_DISPATCHER_CONFIG (used by the smoke tests).
  */
-/** Default machine-wide config location (mode 0600). */
+/** Default config location: DSH_HOME when set, else ~/.dsh (mode 0600). */
 export declare const DEFAULT_CONFIG_FILE: string;
-/** Default workspace task file written on each dispatch. */
+/** Default workspace task file written on each dispatch (under DSH_HOME). */
 export declare const DEFAULT_TASK_FILE: string;
 /** Default minutes before an auto-execute worker is killed (was a hardcoded 10). */
 export declare const DEFAULT_WORKER_TIMEOUT_MINUTES = 30;
 /** Default worker prompt template ({title}/{content} replaced per task). */
 export declare const DEFAULT_WORKER_PROMPT: string;
-/** Test override for the config location. */
+/** Config location: DSH_TASK_DISPATCHER_CONFIG → DSH_HOME → ~/.dsh (mode 0600). */
 export declare function configPath(): string;
 /** How to select tasks from the source project. */
 export type DueMode = 'today' | 'all';
@@ -43,6 +43,16 @@ export interface DispatcherConfig {
     flomoStripBodyHash: boolean;
     /** Post a macOS notification on each dispatch. */
     notifyMac: boolean;
+    /** Push a SHORT result notice after every auto-executed task (and a batch tally). */
+    notifyResult: boolean;
+    /** Push the dispatch notification / session report to WeChat via ClawBot. */
+    notifyWechat: boolean;
+    /** ClawBot gateway base URL; '' = http://127.0.0.1:51235. */
+    wechatGatewayUrl: string;
+    /** WeChat recipient id; '' = auto-detect the ClawBot-logged-in user. */
+    wechatTo: string;
+    /** ClawBot state dir; '' = $DSH_WECHAT_HOME or ~/.dsh-wechat. */
+    wechatStateDir: string;
     /** Where the today-tasks file is written. */
     taskFile: string;
     /** ISO timestamp of the last successful dispatch. */
@@ -78,6 +88,11 @@ export interface DispatcherConfigView {
     flomoTag: string;
     flomoStripBodyHash: boolean;
     notifyMac: boolean;
+    notifyResult: boolean;
+    notifyWechat: boolean;
+    wechatGatewayUrl: string;
+    wechatTo: string;
+    wechatStateDir: string;
     taskFile: string;
     lastDispatchAt: string;
     lastTaskCount: number;

@@ -40,12 +40,12 @@ const SECTION_ORDER = 170
 
 /** Model-facing announcement: plugin presence, capabilities, and limits. */
 export const DISPATCHER_GUIDANCE =
-  '本机已安装 dsh-task-dispatcher 插件（滴答清单任务派发器）：每隔一段可配置的间隔（默认每 30 分钟）自动从滴答清单「5️⃣AI」（或配置的来源）拉取今天到期/逾期的任务，写入今日任务文件（默认 ~/.dsh/dsh-task-dispatcher/today-tasks.md），' +
-  '并在任务发生变化时发送 flomo+macOS 通知。工具：dispatcher_status（状态）、dispatcher_config（配置拉取间隔/来源/过滤/通知/自动执行/worker 超时）、dispatcher_run（立即拉取一次）、dispatcher_report（执行完/会话结束后发一条 flomo 汇总）。' +
+  '本机已安装 dsh-task-dispatcher 插件（滴答清单任务派发器）：每隔一段可配置的间隔（默认每 30 分钟）自动从滴答清单「5️⃣AI」（或配置的来源）拉取今天到期/逾期的任务，写入今日任务文件（默认 DSH_HOME 下的 dsh-task-dispatcher/today-tasks.md，DSH_HOME 未设时回落 ~/.dsh），' +
+  '并在任务发生变化时发送通知（默认走**微信**：通过本机微信机器人 ClawBot 的网关 127.0.0.1:51235 把消息发到扫码登录的那个微信；flomo / macOS 通道保留，由配置开关决定）。工具：dispatcher_status（状态）、dispatcher_config（配置拉取间隔/来源/过滤/通知渠道/自动执行/worker 超时；testWechat 可发测试消息）、dispatcher_run（立即拉取一次）、dispatcher_report（执行完/会话结束后发一条汇总，默认发微信）。' +
   '自动执行的单个 worker 有超时保护（workerTimeoutMinutes，默认 30 分钟，到点 SIGKILL），可在设置面板或 dispatcher_config 调整。' +
   '你任务都是随手写进滴答清单的，插件会自动跟上：随时往清单里加任务，下次拉取就会带进来。' +
   '当你开始一天的工作时，先用 read 读取今日任务文件，逐项执行；完成的用 ticktick_complete 回写滴答清单，并把结果落到 Obsidian 知识库/项目档案。' +
-  '每次执行完/告一段落后，调用 dispatcher_report 把本次完成/失败/跳过情况汇总（total/completed/failed/skipped + 可选 summary）发一条 flomo。' +
+  '**执行结果回执（notifyResult，默认开）**：自动执行的每个任务在 worker 结束后会**自动**推一条简明结果（✅/❌ + 标题 + 一句话结果）到已开启的通知通道（默认微信），多任务再补一条批次汇总——这条不依赖 worker 自己记得汇报。每次执行完/告一段落后，还要调用 dispatcher_report 把本次完成/失败/跳过情况汇总（total/completed/failed/skipped + 可选 summary），它会按配置把汇总发到微信（默认通道）。' +
   '用户提到「任务派发器 / 今日任务 / 派发 / 今天要做啥」时即指本插件，请据此协作。'
 
 /** Plugin config, read from the composition row. */
@@ -131,7 +131,7 @@ export function apply(ctx: Context, config?: Config): void {
           // Auto-execute each pulled task in its own headless session (serial).
           if (cfg.autoExecute && result.tasks.length > 0) {
             ctx.logger?.info?.('[dsh-task-dispatcher] auto-executing ' + result.tasks.length + ' task(s), serial')
-            const exec = await runAutoExecute(store, api, result.tasks)
+            const exec = await runAutoExecute(store, api, result.tasks, { notifyResult: true })
             ctx.logger?.info?.('[dsh-task-dispatcher] auto-execute: ' + exec.log.join(' | '))
           }
         } catch (error) {
@@ -147,11 +147,27 @@ export function apply(ctx: Context, config?: Config): void {
 }
 
 /** Re-exports for host consumers and the smoke tests. */
+export { dshHome, pluginPath } from './home.ts'
 export { DispatcherStore, configPath, DEFAULT_CONFIG_FILE, DEFAULT_TASK_FILE, DEFAULT_WORKER_PROMPT, DEFAULT_WORKER_TIMEOUT_MINUTES, type DispatcherConfig, type DispatcherConfigView } from './store.ts'
-export { doDispatch, localDateString, type DispatchedTask, type DispatchResult } from './dispatch.ts'
-export { flomoMemo, macNotify, escapeHashes, buildFlomoContent, HASH_SAFE } from './notify.ts'
+export { doDispatch, notifyText, localDateString, type DispatchedTask, type DispatchResult, type NotifyChannel } from './dispatch.ts'
+export { flomoMemo, macNotify, wechatSend, wechatRecipient, wechatStateDir, escapeHashes, buildFlomoContent, HASH_SAFE, WECHAT_GATEWAY_URL, type WechatOptions } from './notify.ts'
 export { dispatcherStatusTool, dispatcherConfigTool, dispatcherRunTool, dispatcherReportTool, buildTools, type ToolContext } from './tools.ts'
 export { makeRoutes, DISPATCHER_API } from './routes.ts'
-export { runAutoExecute, spawnWorker, buildWorkerPrompt, DEFAULT_WORKER_TIMEOUT_MS, type WorkerResult, type AutoExecOutcome } from './executor.ts'
+export { runAutoExecute, spawnWorker, buildWorkerPrompt, summarizeWorkerOutput, DEFAULT_WORKER_TIMEOUT_MS, type WorkerResult, type TaskExecResult, type AutoExecOutcome } from './executor.ts'
 export { listWorkspaces, resolveWorkspacePath, resolveWorkspaceTitle, workspaceStorePath, DEFAULT_WORKSPACE_STORE, type WorkspaceInfo } from './workspaces.ts'
+export {
+  DeferredController,
+  TIMER_LABEL,
+  bundledScriptPath,
+  coerceQueue,
+  defaultQueue,
+  installedScriptPath,
+  newestSessionMtime,
+  queuePath,
+  timerPlistPath,
+  type DeferredAction,
+  type DeferredQueue,
+  type DeferredStatus,
+  type TimerState,
+} from './deferred.ts'
 export { defineTool }

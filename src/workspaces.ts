@@ -15,8 +15,8 @@
  */
 
 import { readFile } from 'node:fs/promises'
-import { homedir } from 'node:os'
-import path from 'node:path'
+
+import { pluginPath } from './home.ts'
 
 /** One DSH workspace (id + display title + directory path). */
 export interface WorkspaceInfo {
@@ -25,13 +25,12 @@ export interface WorkspaceInfo {
   path: string
 }
 
-/** Default machine-wide workspace ledger location. */
-export const DEFAULT_WORKSPACE_STORE = path.join(homedir(), '.dsh', 'storages', 'workspace.json')
+/** Default workspace ledger location: DSH_HOME when set, else ~/.dsh. */
+export const DEFAULT_WORKSPACE_STORE = pluginPath(undefined, 'storages', 'workspace.json')
 
-/** Test override for the workspace ledger location. */
+/** Ledger location: DSH_WORKSPACE_STORE → DSH_HOME → ~/.dsh. */
 export function workspaceStorePath(): string {
-  const override = process.env.DSH_WORKSPACE_STORE
-  return override !== undefined && override !== '' ? override : DEFAULT_WORKSPACE_STORE
+  return pluginPath(process.env.DSH_WORKSPACE_STORE, 'storages', 'workspace.json')
 }
 
 /**

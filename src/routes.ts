@@ -10,6 +10,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { DispatcherStore } from './store.ts'
 import type { TickTickApi } from 'dsh-ticktick'
 import { doDispatch } from './dispatch.ts'
+import { DeferredController } from './deferred.ts'
 import { listWorkspaces } from './workspaces.ts'
 
 /** Route paths. */
@@ -19,6 +20,12 @@ export const DISPATCHER_API = {
   status: '/api/dsh-task-dispatcher/status',
   run: '/api/dsh-task-dispatcher/run',
   workspaces: '/api/dsh-task-dispatcher/workspaces',
+  // Deferred TickTick sync (agent → TickTick): status, thresholds, manual flush
+  // and the launchd timer the standalone script runs under.
+  deferred: '/api/dsh-task-dispatcher/deferred',
+  deferredConfig: '/api/dsh-task-dispatcher/deferred/config',
+  deferredFlush: '/api/dsh-task-dispatcher/deferred/flush',
+  deferredTimer: '/api/dsh-task-dispatcher/deferred/timer',
 } as const
 
 /** Cap on JSON request bodies. */
@@ -81,6 +88,7 @@ export interface RouteContext {
 /** Build every /api/dsh-task-dispatcher route (exact paths). */
 export function makeRoutes(deps: RouteContext) {
   const { store, api } = deps
+  const deferred = new DeferredController()
 
   const guard = (req: IncomingMessage, res: ServerResponse, method: string): boolean => {
     if (!isLoopbackRequest(req)) {
@@ -155,6 +163,63 @@ export function makeRoutes(deps: RouteContext) {
       handler: async (req: IncomingMessage, res: ServerResponse) => {
         if (!guard(req, res, 'GET')) return
         writeJson(res, 200, { workspaces: await listWorkspaces() })
+      },
+    },
+    {
+      kind: 'exact' as const,
+      path: DISPATCHER_API.deferred,
+      handler: async (req: IncomingMessage, res: ServerResponse) => {
+        if (!guard(req, res, 'GET')) return
+        writeJson(res, 200, await deferred.status())
+      },
+    },
+    {
+      kind: 'exact' as const,
+      path: DISPATCHER_API.deferredConfig,
+      handler: async (req: IncomingMessage, res: ServerResponse) => {
+        if (!guard(req, res, 'POST')) return
+        const body = await readJsonBody(req)
+        if (body === undefined) {
+          writeJson(res, 400, { error: 'invalid JSON body' })
+          return
+        }
+        const patch: { idleMinutes?: number; maxPerSession?: number; intervalSeconds?: number } = {}
+        if (typeof body.idleMinutes === 'number') patch.idleMinutes = body.idleMinutes
+        if (typeof body.maxPerSession === 'number') patch.maxPerSession = body.maxPerSession
+        if (typeof body.intervalSeconds === 'number') patch.intervalSeconds = body.intervalSeconds
+        writeJson(res, 200, await deferred.patchConfig(patch))
+      },
+    },
+    {
+      kind: 'exact' as const,
+      path: DISPATCHER_API.deferredFlush,
+      handler: async (req: IncomingMessage, res: ServerResponse) => {
+        if (!guard(req, res, 'POST')) return
+        const body = await readJsonBody(req)
+        writeJson(res, 200, await deferred.flush(body?.force === true))
+      },
+    },
+    {
+      kind: 'exact' as const,
+      path: DISPATCHER_API.deferredTimer,
+      handler: async (req: IncomingMessage, res: ServerResponse) => {
+        if (!guard(req, res, 'POST')) return
+        const body = await readJsonBody(req)
+        const action = typeof body?.action === 'string' ? body.action : 'reload'
+        if (action === 'uninstall') {
+          writeJson(res, 200, await deferred.removeTimer())
+          return
+        }
+        if (action === 'install-script') {
+          writeJson(res, 200, await deferred.installScript(body?.force === true))
+          return
+        }
+        // install / reload: write the plist and (re)bootstrap the job.
+        const current = await deferred.status()
+        const interval = typeof body?.intervalSeconds === 'number'
+          ? body.intervalSeconds
+          : current.timer.intervalSeconds || 120
+        writeJson(res, 200, await deferred.writeTimer(interval))
       },
     },
   ]

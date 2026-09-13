@@ -4,7 +4,7 @@
  * A dispatch resolves the configured TickTick source project, pulls its
  * incomplete tasks, filters to today's relevant ones, writes a today-tasks
  * file the agent reads (each task: title + due date + its TickTick description
- * quoted underneath), and notifies (flomo + macOS). The actual task execution
+ * quoted underneath), and notifies (WeChat via ClawBot + flomo + macOS). The actual task execution
  * is done by the agent in DSH using the existing dsh-ticktick tools; the file
  * + notification simply tell the agent what to work on today and write results
  * back.
@@ -24,7 +24,7 @@ import path from 'node:path'
 import { TickTickStore, TickTickApi } from 'dsh-ticktick'
 import type { DispatcherStore } from './store.ts'
 import type { DispatcherConfig } from './store.ts'
-import { flomoMemo, macNotify, type NotifyResult } from './notify.ts'
+import { flomoMemo, macNotify, wechatSend, type NotifyResult } from './notify.ts'
 
 /** One task picked for today's dispatch. */
 export interface DispatchedTask {
@@ -155,6 +155,62 @@ function dueLabel(dueDate: string | undefined): string {
 }
 
 /**
+ * Fan one text notification out to every enabled channel.
+ *
+ * The single choke point for "push some text at the user" (dispatch notices,
+ * per-task execution results, the auto-execute batch tally, session reports),
+ * so channel behaviour — the WeChat/ClawBot relay, flomo's ASCII-# escaping,
+ * the macOS banner — is defined once. Failures are returned per channel and
+ * never thrown: a notification must not break the work it reports on.
+ *
+ * @param content - message body (never contains a channel tag).
+ * @param cfg - dispatcher config the channel switches are read from.
+ * @param opts.channels - restrict to these channels instead of the enabled ones.
+ * @param opts.macTitle / opts.macSubtitle / opts.macBody - banner texts.
+ */
+export async function notifyText(
+  content: string,
+  cfg: DispatcherConfig,
+  opts: { channels?: NotifyChannel[]; macTitle?: string; macSubtitle?: string; macBody?: string } = {},
+): Promise<NotifyResult[]> {
+  const results: NotifyResult[] = []
+  const body = (content ?? '').trim()
+  if (body === '') return results
+  const wanted = (channel: NotifyChannel, enabled: boolean): boolean =>
+    opts.channels === undefined ? enabled : opts.channels.includes(channel)
+  if (wanted('wechat', cfg.notifyWechat)) {
+    // WeChat via the local ClawBot gateway (DSH-WeChatClawBot). Plain text:
+    // WeChat has no tag parser, so the body is sent verbatim.
+    results.push(await wechatSend(body, {
+      gatewayUrl: cfg.wechatGatewayUrl,
+      to: cfg.wechatTo,
+      stateDir: cfg.wechatStateDir,
+    }))
+  }
+  if (wanted('flomo', cfg.notifyFlomo)) {
+    if (cfg.flomoTag === '') {
+      results.push({ ok: false, channel: 'flomo', message: '未配置 flomo 标签（flomoTag 为空），已跳过 flomo。' })
+    } else {
+      // flomo parses `#word` as a tag. flomoMemo replaces any ASCII '#' in the
+      // body with the full-width '＃' (readable, never a tag) while the
+      // configured flomoTag — appended after the body — keeps its own '#'.
+      results.push(await flomoMemo(body, cfg.flomoTag, cfg.flomoStripBodyHash))
+    }
+  }
+  if (wanted('mac', cfg.notifyMac)) {
+    results.push(await macNotify(
+      opts.macTitle ?? 'DSH 任务派发',
+      opts.macSubtitle ?? '',
+      opts.macBody ?? (body.split('\n')[0] ?? '').slice(0, 200),
+    ))
+  }
+  return results
+}
+
+/** One notification channel name. */
+export type NotifyChannel = 'wechat' | 'flomo' | 'mac'
+
+/**
  * Run one dispatch using the given store and (optionally) an injected
  * TickTickApi (the smoke tests inject a fake). Writes the today-tasks file
  * and notifies, then records the dispatch on the store.
@@ -242,22 +298,19 @@ export async function doDispatch(store: DispatcherStore, api: TickTickApi, opts:
   // the set changed or a manual run forced it. Avoids spamming "0 项" or
   // repeating the same list every interval.
   const shouldNotify = (opts.forceNotify === true || changed) && selected.length > 0
-  const notified = shouldNotify && (cfg.notifyFlomo || cfg.notifyMac)
+  const notified = shouldNotify && (cfg.notifyFlomo || cfg.notifyMac || cfg.notifyWechat)
   if (shouldNotify) {
-    if (cfg.notifyFlomo) {
-      const rawBody = [
-        `📋 今日派发 · ${today} · 「${projectName}」共 ${selected.length} 项待执行`,
-        ...selected.slice(0, 12).map((t) => (t.actionable ? `- ${t.title}` : `- ${t.title}（进行中）`)),
-        ...(windowCount > 0 ? ['', `其中 ${windowCount} 项为「进行中」窗口任务（开始日已到、未到截止），仅提示、不自动执行。`] : []),
-      ].join('\n')
-      // flomo parses `#word` as a tag. flomoMemo replaces any ASCII '#' in the
-      // body with the full-width '＃' (readable, never a tag) while the
-      // configured flomoTag — appended after the body — keeps its own '#'.
-      notifies.push(await flomoMemo(rawBody, cfg.flomoTag, cfg.flomoStripBodyHash))
-    }
-    if (cfg.notifyMac) {
-      notifies.push(await macNotify('DSH 任务派发', projectName, `今日 ${selected.length} 项任务待执行（${today}）`))
-    }
+    // One body shared by the text channels (WeChat + flomo); flomo gets the
+    // configured tag appended, WeChat does not want one.
+    const rawBody = [
+      `📋 今日派发 · ${today} · 「${projectName}」共 ${selected.length} 项待执行`,
+      ...selected.slice(0, 12).map((t) => (t.actionable ? `- ${t.title}` : `- ${t.title}（进行中）`)),
+      ...(windowCount > 0 ? ['', `其中 ${windowCount} 项为「进行中」窗口任务（开始日已到、未到截止），仅提示、不自动执行。`] : []),
+    ].join('\n')
+    notifies.push(...await notifyText(rawBody, cfg, {
+      macSubtitle: projectName,
+      macBody: `今日 ${selected.length} 项任务待执行（${today}）`,
+    }))
   }
 
   await store.recordDispatch(titles)
@@ -268,9 +321,12 @@ export async function doDispatch(store: DispatcherStore, api: TickTickApi, opts:
   } else if (!shouldNotify) {
     extra = '，任务无变化，跳过通知'
   } else if (notified) {
-    extra = '，已发送通知'
+    const okChannels = notifies.filter((n) => n.ok).map((n) => n.channel)
+    extra = okChannels.length > 0
+      ? '，已发送通知（' + okChannels.join('/') + '）'
+      : '，通知发送失败：' + notifies.map((n) => n.channel + ' → ' + n.message).join('；')
   } else {
-    extra = '，通知未发送（flomo/macOS 均未配置）'
+    extra = '，通知未发送（微信/flomo/macOS 均未开启）'
   }
   return {
     ok: true,

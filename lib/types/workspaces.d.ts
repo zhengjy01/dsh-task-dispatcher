@@ -19,9 +19,9 @@ export interface WorkspaceInfo {
     title: string;
     path: string;
 }
-/** Default machine-wide workspace ledger location. */
+/** Default workspace ledger location: DSH_HOME when set, else ~/.dsh. */
 export declare const DEFAULT_WORKSPACE_STORE: string;
-/** Test override for the workspace ledger location. */
+/** Ledger location: DSH_WORKSPACE_STORE → DSH_HOME → ~/.dsh. */
 export declare function workspaceStorePath(): string;
 /**
  * List every known DSH workspace, sorted by title. Never throws: a missing,

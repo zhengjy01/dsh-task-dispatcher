@@ -11,14 +11,15 @@
  */
 
 import { readFile, writeFile, mkdir } from 'node:fs/promises'
-import { homedir } from 'node:os'
 import path from 'node:path'
 
-/** Default machine-wide config location (mode 0600). */
-export const DEFAULT_CONFIG_FILE = path.join(homedir(), '.dsh', 'dsh-task-dispatcher.json')
+import { pluginPath } from './home.ts'
 
-/** Default workspace task file written on each dispatch. */
-export const DEFAULT_TASK_FILE = path.join(homedir(), '.dsh', 'dsh-task-dispatcher', 'today-tasks.md')
+/** Default config location: DSH_HOME when set, else ~/.dsh (mode 0600). */
+export const DEFAULT_CONFIG_FILE = pluginPath(undefined, 'dsh-task-dispatcher.json')
+
+/** Default workspace task file written on each dispatch (under DSH_HOME). */
+export const DEFAULT_TASK_FILE = pluginPath(undefined, 'dsh-task-dispatcher', 'today-tasks.md')
 
 /** Default minutes before an auto-execute worker is killed (was a hardcoded 10). */
 export const DEFAULT_WORKER_TIMEOUT_MINUTES = 30
@@ -30,10 +31,9 @@ export const DEFAULT_WORKER_PROMPT =
   '说明：{content}\n\n' +
   '要求：聚焦完成这一项即可；完成后在回复末尾单独输出一行：DONE'
 
-/** Test override for the config location. */
+/** Config location: DSH_TASK_DISPATCHER_CONFIG → DSH_HOME → ~/.dsh (mode 0600). */
 export function configPath(): string {
-  const override = process.env.DSH_TASK_DISPATCHER_CONFIG
-  return override !== undefined && override !== '' ? override : DEFAULT_CONFIG_FILE
+  return pluginPath(process.env.DSH_TASK_DISPATCHER_CONFIG, 'dsh-task-dispatcher.json')
 }
 
 /** How to select tasks from the source project. */
@@ -61,6 +61,16 @@ export interface DispatcherConfig {
   flomoStripBodyHash: boolean
   /** Post a macOS notification on each dispatch. */
   notifyMac: boolean
+  /** Push a SHORT result notice after every auto-executed task (and a batch tally). */
+  notifyResult: boolean
+  /** Push the dispatch notification / session report to WeChat via ClawBot. */
+  notifyWechat: boolean
+  /** ClawBot gateway base URL; '' = http://127.0.0.1:51235. */
+  wechatGatewayUrl: string
+  /** WeChat recipient id; '' = auto-detect the ClawBot-logged-in user. */
+  wechatTo: string
+  /** ClawBot state dir; '' = $DSH_WECHAT_HOME or ~/.dsh-wechat. */
+  wechatStateDir: string
   /** Where the today-tasks file is written. */
   taskFile: string
   /** ISO timestamp of the last successful dispatch. */
@@ -97,6 +107,11 @@ export interface DispatcherConfigView {
   flomoTag: string
   flomoStripBodyHash: boolean
   notifyMac: boolean
+  notifyResult: boolean
+  notifyWechat: boolean
+  wechatGatewayUrl: string
+  wechatTo: string
+  wechatStateDir: string
   taskFile: string
   lastDispatchAt: string
   lastTaskCount: number
@@ -123,6 +138,11 @@ function defaults(): DispatcherConfig {
     flomoTag: 'AI/DSH/派发',
     flomoStripBodyHash: true,
     notifyMac: true,
+    notifyResult: true,
+    notifyWechat: false,
+    wechatGatewayUrl: '',
+    wechatTo: '',
+    wechatStateDir: '',
     taskFile: DEFAULT_TASK_FILE,
     lastDispatchAt: '',
     lastTaskCount: 0,
@@ -155,6 +175,11 @@ function parse(raw: unknown): DispatcherConfig {
     flomoTag: str(record.flomoTag, d.flomoTag),
     flomoStripBodyHash: bool(record.flomoStripBodyHash, d.flomoStripBodyHash),
     notifyMac: bool(record.notifyMac, d.notifyMac),
+    notifyResult: bool(record.notifyResult, d.notifyResult),
+    notifyWechat: bool(record.notifyWechat, d.notifyWechat),
+    wechatGatewayUrl: str(record.wechatGatewayUrl, ''),
+    wechatTo: str(record.wechatTo, ''),
+    wechatStateDir: str(record.wechatStateDir, ''),
     taskFile: str(record.taskFile, d.taskFile),
     lastDispatchAt: str(record.lastDispatchAt, ''),
     lastTaskCount: num(record.lastTaskCount, 0),
@@ -215,6 +240,11 @@ export class DispatcherStore {
       flomoTag: cfg.flomoTag,
       flomoStripBodyHash: cfg.flomoStripBodyHash,
       notifyMac: cfg.notifyMac,
+      notifyResult: cfg.notifyResult,
+      notifyWechat: cfg.notifyWechat,
+      wechatGatewayUrl: cfg.wechatGatewayUrl,
+      wechatTo: cfg.wechatTo,
+      wechatStateDir: cfg.wechatStateDir,
       taskFile: cfg.taskFile,
       lastDispatchAt: cfg.lastDispatchAt,
       lastTaskCount: cfg.lastTaskCount,
@@ -243,6 +273,11 @@ export class DispatcherStore {
     if (args !== undefined && typeof args.flomoTag === 'string') next.flomoTag = args.flomoTag.trim()
     if (args !== undefined && typeof args.flomoStripBodyHash === 'boolean') next.flomoStripBodyHash = args.flomoStripBodyHash
     if (args !== undefined && typeof args.notifyMac === 'boolean') next.notifyMac = args.notifyMac
+    if (args !== undefined && typeof args.notifyResult === 'boolean') next.notifyResult = args.notifyResult
+    if (args !== undefined && typeof args.notifyWechat === 'boolean') next.notifyWechat = args.notifyWechat
+    if (args !== undefined && typeof args.wechatGatewayUrl === 'string') next.wechatGatewayUrl = args.wechatGatewayUrl.trim()
+    if (args !== undefined && typeof args.wechatTo === 'string') next.wechatTo = args.wechatTo.trim()
+    if (args !== undefined && typeof args.wechatStateDir === 'string') next.wechatStateDir = args.wechatStateDir.trim()
     if (args !== undefined && typeof args.taskFile === 'string' && args.taskFile.trim() !== '') next.taskFile = args.taskFile.trim()
     if (args !== undefined && typeof args.autoExecute === 'boolean') next.autoExecute = args.autoExecute
     if (args !== undefined && args.retryCooldownMinutes !== undefined) next.retryCooldownMinutes = clampInt(Number(args.retryCooldownMinutes), 1, 24 * 60)

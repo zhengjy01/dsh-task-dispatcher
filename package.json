@@ -1,7 +1,7 @@
 {
   "name": "dsh-task-dispatcher",
   "version": "0.2.0",
-  "description": "Task dispatcher for DeepSeek Harness: use TickTick (滴答清单) 5️⃣AI as the daily task dispatcher — a cordis timer pulls today's due tasks each morning, writes them to the workspace task file, and notifies (flomo + macOS) so the agent works through them and writes results back to TickTick",
+  "description": "Task dispatcher for DeepSeek Harness: use TickTick (滴答清单) as the daily task dispatcher — a cordis timer pulls today's due tasks, writes them to the workspace task file, and notifies (WeChat via ClawBot / flomo / macOS) so the agent works through them and writes results back to TickTick",
   "type": "module",
   "main": "lib/index.js",
   "exports": {
@@ -31,7 +31,8 @@
     "README.md",
     "README.zh.md",
     "CHANGELOG.md",
-    "LICENSE"
+    "LICENSE",
+    "scripts/ticktick-pending.mjs"
   ],
   "keywords": [
     "dsh",
@@ -59,12 +60,13 @@
     "bundle": "tsdown",
     "watch": "tsdown --watch",
     "typecheck": "tsc --noEmit",
-    "test": "node tests/smoke.mjs",
+    "test": "node tests/smoke.mjs && node tests/deferred.mjs",
     "release": "node scripts/release.mjs",
     "release:check": "node scripts/release.mjs --check",
     "verify": "node scripts/portability.mjs --health /api/dsh-task-dispatcher/probe",
     "verify:full": "node scripts/portability.mjs --health /api/dsh-task-dispatcher/probe --stability 30",
-    "verify:quick": "node scripts/portability.mjs --skip-audit --stability 5 --health /api/dsh-task-dispatcher/probe"
+    "verify:quick": "node scripts/portability.mjs --skip-audit --stability 5 --health /api/dsh-task-dispatcher/probe",
+    "test:deferred": "node tests/deferred.mjs"
   },
   "dependencies": {
     "dsh-ticktick": "^0.1.4"

@@ -17,6 +17,13 @@
  * Re-attempt protection: a task whose worker failed is marked attempted and
  * not re-run until the retry cooldown elapses, so a flaky task doesn't spin
  * every interval.
+ *
+ * Result notification: dispatching is not the same as finishing. When
+ * `notifyResult` is on, every executed task pushes a SHORT outcome message
+ * through the configured channels (WeChat / flomo / macOS) as soon as its
+ * worker settles, and a compact batch tally follows when more than one task
+ * ran — so a run that happens unattended still reports back by itself instead
+ * of relying on the worker remembering to call `dispatcher_report`.
  */
 import type { DispatcherStore } from './store.ts';
 import type { DispatchedTask } from './dispatch.ts';
@@ -24,8 +31,24 @@ import type { DispatchedTask } from './dispatch.ts';
 export interface WorkerResult {
     ok: boolean;
     exitCode: number | null;
+    /** stdout + stderr (kept for logs / back-compat). */
     output: string;
+    /** The final assistant text alone — the headless runner prints it on stdout. */
+    stdout: string;
+    /** Progress, reasoning and diagnostics, which the runner prints on stderr. */
+    stderr: string;
     error?: string;
+}
+/** Per-task outcome of one auto-execute pass (drives the result notification). */
+export interface TaskExecResult {
+    taskId: string;
+    title: string;
+    status: 'completed' | 'failed' | 'skipped';
+    /** Concise answer summary when completed, else the failure reason. */
+    summary: string;
+    /** False when the worker succeeded but the TickTick write-back failed. */
+    writtenBack: boolean;
+    durationMs: number;
 }
 /** Outline of one auto-execute pass. */
 export interface AutoExecOutcome {
@@ -34,6 +57,8 @@ export interface AutoExecOutcome {
     failed: number;
     skipped: number;
     log: string[];
+    /** One entry per task the pass considered, in execution order. */
+    results: TaskExecResult[];
 }
 /**
  * Fallback worker timeout when no explicit `timeoutMs` is given to
@@ -53,6 +78,16 @@ export interface SpawnWorkerOptions {
  * Best-effort: never throws; resolves a WorkerResult even on spawn error.
  */
 export declare function spawnWorker(prompt: string, opts?: SpawnWorkerOptions): Promise<WorkerResult>;
+/**
+ * Condense a worker's final answer into one short line for the result notice.
+ *
+ * The headless runner writes ONLY the final assistant text to stdout (progress
+ * and reasoning go to stderr), so stdout is the answer. Blank lines and a
+ * trailing bare completion marker (the worker prompt asks for `DONE`) are
+ * dropped, and the rest is flattened and capped — a notification must stay
+ * readable in a chat bubble.
+ */
+export declare function summarizeWorkerOutput(stdout: string, maxChars?: number): string;
 /** Build a worker prompt from the template + this task. */
 export declare function buildWorkerPrompt(template: string, task: DispatchedTask): string;
 /**
@@ -67,4 +102,8 @@ export declare function runAutoExecute(store: DispatcherStore, api: {
 }, tasks: DispatchedTask[], opts?: {
     spawn?: (prompt: string, opts: SpawnWorkerOptions) => Promise<WorkerResult>;
     onComplete?: (task: DispatchedTask) => Promise<void>;
+    /** Push a result notification as each task settles (opt-in; real callers set it). */
+    notifyResult?: boolean;
+    /** Injectable notification transport (tests / custom channels). */
+    notify?: (text: string) => Promise<void>;
 }): Promise<AutoExecOutcome>;

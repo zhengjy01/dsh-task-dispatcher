@@ -32,7 +32,7 @@ declare module 'dsh-ticktick' {
     color?: string
   }
 
-  /** Credential store bound to ~/.dsh/dsh-ticktick.json. */
+  /** Credential store bound to the DSH home (dsh-ticktick.json). */
   class TickTickStore {
     load(): Promise<{ accessToken: string; refreshToken: string; region: string }>
   }

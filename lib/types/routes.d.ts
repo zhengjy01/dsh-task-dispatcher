@@ -15,6 +15,10 @@ export declare const DISPATCHER_API: {
     readonly status: "/api/dsh-task-dispatcher/status";
     readonly run: "/api/dsh-task-dispatcher/run";
     readonly workspaces: "/api/dsh-task-dispatcher/workspaces";
+    readonly deferred: "/api/dsh-task-dispatcher/deferred";
+    readonly deferredConfig: "/api/dsh-task-dispatcher/deferred/config";
+    readonly deferredFlush: "/api/dsh-task-dispatcher/deferred/flush";
+    readonly deferredTimer: "/api/dsh-task-dispatcher/deferred/timer";
 };
 /** Route handler context. */
 export interface RouteContext {
@@ -41,5 +45,21 @@ export declare function makeRoutes(deps: RouteContext): ({
 } | {
     kind: "exact";
     path: "/api/dsh-task-dispatcher/workspaces";
+    handler: (req: IncomingMessage, res: ServerResponse) => Promise<void>;
+} | {
+    kind: "exact";
+    path: "/api/dsh-task-dispatcher/deferred";
+    handler: (req: IncomingMessage, res: ServerResponse) => Promise<void>;
+} | {
+    kind: "exact";
+    path: "/api/dsh-task-dispatcher/deferred/config";
+    handler: (req: IncomingMessage, res: ServerResponse) => Promise<void>;
+} | {
+    kind: "exact";
+    path: "/api/dsh-task-dispatcher/deferred/flush";
+    handler: (req: IncomingMessage, res: ServerResponse) => Promise<void>;
+} | {
+    kind: "exact";
+    path: "/api/dsh-task-dispatcher/deferred/timer";
     handler: (req: IncomingMessage, res: ServerResponse) => Promise<void>;
 })[];

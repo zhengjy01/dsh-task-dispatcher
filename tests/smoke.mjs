@@ -241,6 +241,100 @@ console.log('\nrun 9: flomo 正文井号处理（派发通知与会话汇总共�
   check('无井号正文不受影响', plain === '干净正文 #AI/DSH/派发', plain)
 }
 
+console.log('\nrun 10: 执行结果回执（每任务一条简明结果 + 多任务批次汇总）')
+{
+  const { runAutoExecute, summarizeWorkerOutput } = await import('../lib/index.js')
+  await store.patch({ autoExecute: true, retryCooldownMinutes: 0, notifyResult: true })
+
+  // 摘要只取 stdout（headless runner 把最终答复写 stdout，进度/思考写 stderr），
+  // 丢掉 ANSI、空行与结尾的 DONE 标记，压平成一行并截断。
+  check('摘要取 stdout 最终答复', summarizeWorkerOutput('\u001b[32m做好了：给 dsh-cubox 加了导出\u001b[0m\n\nDONE\n') === '做好了：给 dsh-cubox 加了导出')
+  check('摘要丢掉 DONE 标记', !summarizeWorkerOutput('结论\nDONE').includes('DONE'))
+  check('摘要截断超长正文', summarizeWorkerOutput('x'.repeat(500)).length === 220)
+  check('空 stdout → 空摘要', summarizeWorkerOutput('') === '')
+
+  const captured = []
+  const spawn10 = async (prompt) => {
+    if (prompt.includes('回执A')) return { ok: true, exitCode: 0, output: 'stdout+stderr', stdout: 'A 做完了：改了 notify.ts', stderr: 'progress', error: undefined }
+    if (prompt.includes('回执B')) return { ok: false, exitCode: null, output: '', stdout: '', stderr: '', error: 'timeout' }
+    return { ok: true, exitCode: 0, output: '', stdout: 'C 做完了', stderr: '', error: undefined }
+  }
+  const tasks10 = [
+    { id: 'r1', projectId: 'p-5ai', title: '回执A', content: '', dueDate: '', priority: 0, tags: [] },
+    { id: 'r2', projectId: 'p-5ai', title: '回执B', content: '', dueDate: '', priority: 0, tags: [] },
+    { id: 'r3', projectId: 'p-5ai', title: '回执C', content: '', dueDate: '', priority: 0, tags: [] },
+  ]
+  const exec10 = await runAutoExecute(store, { completeTask: async () => {} }, tasks10, {
+    spawn: spawn10,
+    notifyResult: true,
+    notify: async (text) => { captured.push(text) },
+  })
+  check('3 项执行、2 完成 1 失败', exec10.executed === 3 && exec10.completed === 2 && exec10.failed === 1, JSON.stringify(exec10.log))
+  check('results 每项一条', exec10.results.length === 3, JSON.stringify(exec10.results.map((r) => r.status)))
+  check('完成消息带标题 + 结果摘要', captured[0] === '✅ 任务完成 · 回执A\n结果：A 做完了：改了 notify.ts', JSON.stringify(captured[0]))
+  check('失败消息带超时原因', captured[1].startsWith('❌ 任务失败 · 回执B\n原因：执行超时（30 分钟，已 SIGKILL）'), JSON.stringify(captured[1]))
+  check('多任务补一条批次汇总', captured[3] === '📊 本轮自动执行：完成 2 · 失败 1（共 3 项）\n- ✅ 回执A\n- ❌ 回执B\n- ✅ 回执C', JSON.stringify(captured[3]))
+  check('共 4 条（3 任务 + 1 汇总）', captured.length === 4, JSON.stringify(captured.length))
+
+  // 单任务不补汇总；不传 notifyResult 时一条都不发（测试/其它调用方零副作用）。
+  // 每段用新 taskId：已 attempted 的任务在 retryCooldownMinutes（最小 1 分钟）
+  // 内会被跳过，复用同一个 id 会让后面几段「一条都没发」变得没有意义。
+  const runCase = async (label, ids, opts) => {
+    const caseTasks = ids.map((id) => ({ id, projectId: 'p-5ai', title: '回执' + id, content: '', dueDate: '', priority: 0, tags: [] }))
+    captured.length = 0
+    const outcome = await runAutoExecute(store, { completeTask: async () => {} }, caseTasks, {
+      spawn: async (prompt) => {
+        const id = prompt.match(/回执([A-Za-z0-9]+)/)?.[1]
+        return { ok: true, exitCode: 0, output: '', stdout: id + ' 完成', stderr: '', error: undefined }
+      },
+      ...opts,
+    })
+    return { label, outcome, sent: captured.length }
+  }
+  const one = await runCase('单任务', ['s1'], { notifyResult: true, notify: async (t) => { captured.push(t) } })
+  check('单任务只发 1 条（无汇总）', one.sent === 1, JSON.stringify(one))
+  const optOut = await runCase('未开启', ['s2'], { notify: async (t) => { captured.push(t) } })
+  check('未显式开启 notifyResult → 不发结果（但任务照跑）', optOut.sent === 0 && optOut.outcome.completed === 1, JSON.stringify(optOut))
+
+  // 配置可关（notifyResult=false 时即使调用方开启也不发）
+  await store.patch({ notifyResult: false })
+  const offByCfg = await runCase('配置关', ['s3'], { notifyResult: true, notify: async (t) => { captured.push(t) } })
+  check('配置 notifyResult=false → 不发结果（但任务照跑）', offByCfg.sent === 0 && offByCfg.outcome.completed === 1, JSON.stringify(offByCfg))
+  await store.patch({ notifyResult: true })
+}
+
+console.log('\nrun 11: DSH_HOME 感知（插件覆盖变量 → DSH_HOME → ~/.dsh）')
+{
+  const { dshHome, pluginPath, configPath, workspaceStorePath, DEFAULT_CONFIG_FILE, DEFAULT_TASK_FILE } = await import('../lib/index.js')
+  const saved = {
+    DSH_HOME: process.env.DSH_HOME,
+    DSH_TASK_DISPATCHER_CONFIG: process.env.DSH_TASK_DISPATCHER_CONFIG,
+    DSH_WORKSPACE_STORE: process.env.DSH_WORKSPACE_STORE,
+  }
+  const put = (key, value) => {
+    if (value === undefined) delete process.env[key]
+    else process.env[key] = value
+  }
+  const fakeHome = path.join(root, 'relocated-dsh-home')
+  process.env.DSH_HOME = fakeHome
+  delete process.env.DSH_TASK_DISPATCHER_CONFIG
+  delete process.env.DSH_WORKSPACE_STORE
+  check('dshHome() 认 DSH_HOME', dshHome() === fakeHome, dshHome())
+  check('pluginPath() 落到 DSH_HOME 下', pluginPath(undefined, 'x.json') === path.join(fakeHome, 'x.json'))
+  check('configPath() 落到 DSH_HOME 下', configPath() === path.join(fakeHome, 'dsh-task-dispatcher.json'), configPath())
+  check('workspaceStorePath() 落到 DSH_HOME 下', workspaceStorePath() === path.join(fakeHome, 'storages', 'workspace.json'), workspaceStorePath())
+  check('模块级默认路径也在 home 下',
+    DEFAULT_CONFIG_FILE.endsWith(path.join('dsh-task-dispatcher.json')) && DEFAULT_TASK_FILE.endsWith(path.join('dsh-task-dispatcher', 'today-tasks.md')),
+    DEFAULT_CONFIG_FILE + ' / ' + DEFAULT_TASK_FILE)
+  process.env.DSH_TASK_DISPATCHER_CONFIG = path.join(root, 'explicit.json')
+  check('插件覆盖变量优先于 DSH_HOME', configPath() === path.join(root, 'explicit.json'), configPath())
+  process.env.DSH_WORKSPACE_STORE = path.join(root, 'explicit-workspace.json')
+  check('工作区覆盖变量优先于 DSH_HOME', workspaceStorePath() === path.join(root, 'explicit-workspace.json'), workspaceStorePath())
+  put('DSH_HOME', saved.DSH_HOME)
+  put('DSH_TASK_DISPATCHER_CONFIG', saved.DSH_TASK_DISPATCHER_CONFIG)
+  put('DSH_WORKSPACE_STORE', saved.DSH_WORKSPACE_STORE)
+}
+
 await rm(root, { recursive: true, force: true })
 await rm(wsRoot, { recursive: true, force: true })
 if (failures > 0) {

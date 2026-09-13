@@ -528,8 +528,10 @@ function writeChangelog(ctx, version, changes, { dryRun }) {
 // ---------------------------------------------------------------------------
 
 function npmAuthEnv() {
-  // 凭据优先级：本机 ~/.dsh/dsh-npm.json 的 token（npm 自身未登录）
-  const dshNpm = join(process.env.HOME || '', '.dsh', 'dsh-npm.json');
+  // 凭据优先级：本机 <DSH_HOME>/dsh-npm.json 的 token（npm 自身未登录）。
+  // DSH_HOME 认 launcher / 救援胶囊搬迁过的 home，缺省才回落 ~/.dsh。
+  const dshHome = process.env.DSH_HOME || join(process.env.HOME || '', '.dsh');
+  const dshNpm = join(dshHome, 'dsh-npm.json');
   const env = {};
   const cleanups = [];
   if (existsSync(dshNpm)) {

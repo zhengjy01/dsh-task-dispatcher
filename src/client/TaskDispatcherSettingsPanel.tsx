@@ -7,7 +7,14 @@
  * snapshot. Plain React, no emoji, no external UI package — inline styles only.
  */
 import { useCallback, useEffect, useState } from 'react'
-import { DispatcherApi, type DispatcherConfigView, type DispatcherRunResult, type WorkspaceInfo } from './api.ts'
+import {
+  DispatcherApi,
+  type DeferredActionResult,
+  type DeferredStatus,
+  type DispatcherConfigView,
+  type DispatcherRunResult,
+  type WorkspaceInfo,
+} from './api.ts'
 
 /** Module-level API client (stateless; the component closes over it). */
 const api = new DispatcherApi()
@@ -77,6 +84,18 @@ function statusText(view: DispatcherConfigView | null): string {
     (view.lastDispatchAt ? ' · 上次 ' + view.lastDispatchAt + '（' + view.lastTaskCount + ' 项）' : ' · 尚未拉取')
 }
 
+/** Status line for the deferred-sync block. */
+function deferredStatusText(view: DeferredStatus | null): string {
+  if (view === null) return '加载中…'
+  const idle = view.idleMinutesNow < 0 ? '暂无会话日志' : ('当前已静默 ' + view.idleMinutesNow + ' 分钟')
+  const timer = view.timer.supported
+    ? (view.timer.loaded ? ('定时器运行中（每 ' + String(view.timer.intervalSeconds) + ' 秒检查）') : '定时器未运行')
+    : '非 macOS：无 launchd 定时器，只能手动写入'
+  return '队列 ' + String(view.pending) + ' 条（顶层 ' + String(view.pendingTop) + '） · 阈值 ' + String(view.idleMinutes) +
+    ' 分钟 · ' + idle + ' · ' + (view.isIdle ? '可同步' : '仍在活跃') + ' · ' + timer +
+    (view.lastFlushAt ? ' · 上次写入 ' + view.lastFlushAt : ' · 尚未写入')
+}
+
 /** The settings panel component. */
 export function TaskDispatcherSettingsPanel(): JSX.Element {
   const [view, setView] = useState<DispatcherConfigView | null>(null)
@@ -88,6 +107,10 @@ export function TaskDispatcherSettingsPanel(): JSX.Element {
   const [flomoTag, setFlomoTag] = useState('AI/DSH/派发')
   const [flomoStripBodyHash, setFlomoStripBodyHash] = useState(true)
   const [notifyMac, setNotifyMac] = useState(true)
+  const [notifyResult, setNotifyResult] = useState(true)
+  const [notifyWechat, setNotifyWechat] = useState(false)
+  const [wechatGatewayUrl, setWechatGatewayUrl] = useState('')
+  const [wechatTo, setWechatTo] = useState('')
   const [autoExecute, setAutoExecute] = useState(false)
   const [workerTimeoutMinutes, setWorkerTimeoutMinutes] = useState('30')
   const [taskFile, setTaskFile] = useState('')
@@ -95,6 +118,11 @@ export function TaskDispatcherSettingsPanel(): JSX.Element {
   const [workerWorkspaceId, setWorkerWorkspaceId] = useState('')
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState('')
+  const [deferred, setDeferred] = useState<DeferredStatus | null>(null)
+  const [idleDraft, setIdleDraft] = useState('10')
+  const [capDraft, setCapDraft] = useState('3')
+  const [intervalDraft, setIntervalDraft] = useState('120')
+  const [deferredMsg, setDeferredMsg] = useState('')
 
   const refresh = useCallback(async () => {
     try {
@@ -108,6 +136,10 @@ export function TaskDispatcherSettingsPanel(): JSX.Element {
       setFlomoTag(v.flomoTag)
       setFlomoStripBodyHash(v.flomoStripBodyHash)
       setNotifyMac(v.notifyMac)
+      setNotifyResult(v.notifyResult)
+      setNotifyWechat(v.notifyWechat)
+      setWechatGatewayUrl(v.wechatGatewayUrl)
+      setWechatTo(v.wechatTo)
       setAutoExecute(v.autoExecute)
       setWorkerTimeoutMinutes(String(v.workerTimeoutMinutes))
       setTaskFile(v.taskFile)
@@ -121,6 +153,17 @@ export function TaskDispatcherSettingsPanel(): JSX.Element {
       setWorkspaces(await api.getWorkspaces())
     } catch (error) {
       setMsg('读取工作区列表失败: ' + String(error instanceof Error ? error.message : error))
+    }
+    // Deferred-sync block is loaded best-effort too: a failure only blanks that
+    // block, it must not hide the dispatcher config above.
+    try {
+      const d = await api.getDeferred()
+      setDeferred(d)
+      setIdleDraft(String(d.idleMinutes))
+      setCapDraft(String(d.maxPerSession))
+      setIntervalDraft(String(d.timer.intervalSeconds > 0 ? d.timer.intervalSeconds : 120))
+    } catch {
+      setDeferred(null)
     }
   }, [api])
 
@@ -150,6 +193,10 @@ export function TaskDispatcherSettingsPanel(): JSX.Element {
         flomoTag,
         flomoStripBodyHash,
         notifyMac,
+        notifyResult,
+        notifyWechat,
+        wechatGatewayUrl,
+        wechatTo,
         autoExecute,
         workerWorkspaceId,
         workerTimeoutMinutes: Number(workerTimeoutMinutes) >= 1 ? Number(workerTimeoutMinutes) : 30,
@@ -169,6 +216,39 @@ export function TaskDispatcherSettingsPanel(): JSX.Element {
     })
   }
 
+  /** Run one deferred action, refreshing the block from the returned status. */
+  const deferredAction = (action: () => Promise<DeferredActionResult>): void => {
+    void run(async () => {
+      const result = await action()
+      let status = result.status
+      if (status === undefined) {
+        try {
+          status = await api.getDeferred()
+        } catch {
+          status = undefined
+        }
+      }
+      if (status !== undefined) {
+        setDeferred(status)
+        setIdleDraft(String(status.idleMinutes))
+        setCapDraft(String(status.maxPerSession))
+        setIntervalDraft(String(status.timer.intervalSeconds > 0 ? status.timer.intervalSeconds : 120))
+      }
+      setDeferredMsg(
+        (result.ok ? '[ok] ' : '[failed] ') + result.message + (result.output !== '' ? '\n' + result.output : ''),
+      )
+      return ''
+    })
+  }
+
+  const saveDeferred = (): void => {
+    deferredAction(() => api.setDeferredConfig({
+      idleMinutes: Number(idleDraft) >= 1 ? Number(idleDraft) : 10,
+      maxPerSession: Number(capDraft) >= 1 ? Number(capDraft) : 3,
+      intervalSeconds: Number(intervalDraft) >= 30 ? Number(intervalDraft) : 120,
+    }))
+  }
+
   const lastList = view !== null && view.lastTaskTitles.length > 0 ? view.lastTaskTitles : null
 
   return (
@@ -177,7 +257,7 @@ export function TaskDispatcherSettingsPanel(): JSX.Element {
 
       <p style={s.hint}>
         每隔一段间隔，插件会自动从滴答清单「{projectName || '来源清单'}」拉取今天到期的任务，写入今日任务文件（默认
-        ~/.dsh/dsh-task-dispatcher/today-tasks.md）；<b>任务有变化时</b>才发 flomo + macOS 通知，没变化则保持安静。
+        ~/.dsh/dsh-task-dispatcher/today-tasks.md）；<b>任务有变化时</b>才发通知（微信 / flomo / macOS，按下方开关），没变化则保持安静。
         你随手在滴答清单里加任务，插件会在下次拉取时自动带进来。<b>自动执行</b>开启后，每个拉到的新任务会单独开一个 DSH
         会话（串行，一任务一会话）去执行，成功即回写滴答清单勾掉。下方的「上次拉取任务列表」只是最近一次拉取到的任务快照，非实时。
       </p>
@@ -245,6 +325,28 @@ export function TaskDispatcherSettingsPanel(): JSX.Element {
       </p>
       <label style={s.check}><input type="checkbox" checked={notifyMac} onChange={(e) => setNotifyMac(e.target.checked)} /> macOS 通知</label>
 
+      <label style={s.check}>
+        <input type="checkbox" checked={notifyResult} onChange={(e) => setNotifyResult(e.target.checked)} />
+        执行结果回执（自动执行的每个任务结束后推一条简明结果，多任务再补一条批次汇总）
+      </label>
+
+      <label style={s.check}>
+        <input type="checkbox" checked={notifyWechat} onChange={(e) => setNotifyWechat(e.target.checked)} />
+        微信通知（通过本机微信机器人 ClawBot 推送）
+      </label>
+      <div style={s.row}>
+        <span style={s.label}>ClawBot 网关</span>
+        <input style={{ ...s.input, ...s.flex }} value={wechatGatewayUrl} onChange={(e) => setWechatGatewayUrl(e.target.value)} placeholder="留空默认 http://127.0.0.1:51235" />
+      </div>
+      <div style={s.row}>
+        <span style={s.label}>微信接收人</span>
+        <input style={{ ...s.input, ...s.flex }} value={wechatTo} onChange={(e) => setWechatTo(e.target.value)} placeholder="留空自动识别（ClawBot 扫码登录的那个微信）" />
+      </div>
+      <p style={s.hint}>
+        微信通知复用 DSH-WeChatClawBot 的本地网关：插件把消息 POST 到网关的 /send，由它转发到扫码登录的微信。
+        需要微信悬浮球已扫码登录（否则会提示未找到接收人）；网关默认 127.0.0.1:51235，接收人默认从 ClawBot 状态目录（~/.dsh-wechat）自动识别，也可在此显式填写。
+      </p>
+
       <div style={s.row}>
         <span style={s.label}>任务文件</span>
         <input style={{ ...s.input, ...s.flex }} value={taskFile} onChange={(e) => setTaskFile(e.target.value)} placeholder="留空使用默认" />
@@ -264,6 +366,63 @@ export function TaskDispatcherSettingsPanel(): JSX.Element {
           </ul>
         </>
       )}
+      <div style={{ ...s.hint, borderTop: '1px solid rgba(128,128,128,0.25)', paddingTop: '10px', marginTop: '2px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+        <p style={s.title}>延迟同步（agent → 滴答清单）</p>
+        <p style={s.hint}>
+          会话进行中<b>不直接建任务</b>，只暂存进队列；等<b>整个 DSH</b> 安静够久（下方阈值）后，由定时器统一写入滴答清单
+          「To do」。判据是 ~/.dsh/sessions/ 下<b>最新一个</b>会话日志的修改时间——即「所有会话都不再活动」，不是只看当前会话。
+          写入由独立脚本 + launchd 完成，所以 <b>DSH 关着也能写</b>。
+        </p>
+        <div style={deferred !== null && deferred.timer.loaded ? s.status : s.statusWarn}>{deferredStatusText(deferred)}</div>
+
+        <div style={s.row}>
+          <span style={s.label}>静默阈值</span>
+          <input style={s.num} value={idleDraft} onChange={(e) => setIdleDraft(e.target.value)} />
+          <span style={s.label}>分钟</span>
+          <span style={s.label}>顶层上限</span>
+          <input style={s.num} value={capDraft} onChange={(e) => setCapDraft(e.target.value)} />
+          <span style={s.label}>条/会话</span>
+        </div>
+        <div style={s.row}>
+          <span style={s.label}>检查间隔</span>
+          <input style={s.num} value={intervalDraft} onChange={(e) => setIntervalDraft(e.target.value)} />
+          <span style={s.label}>秒（改它需要重载定时器）</span>
+        </div>
+        <div style={s.row}>
+          <button style={s.button} onClick={saveDeferred} disabled={busy}>保存阈值</button>
+          <button style={s.button} onClick={() => deferredAction(() => api.flushDeferred(false))} disabled={busy}>立即写入</button>
+          <button style={s.button} onClick={() => deferredAction(() => api.flushDeferred(true))} disabled={busy}>强制写入</button>
+          <button style={s.button} onClick={() => deferredAction(() => api.deferredTimer('reload'))} disabled={busy}>重载定时器</button>
+        </div>
+
+        <p style={s.hint}>
+          阈值写在队列文件里（脚本每次运行都读它，下次检查即生效）；<b>检查间隔</b>写在 launchd plist 里，改完会立即重载定时器。
+          实际写入时间 = 静默满阈值后的下一次检查，也就是「阈值 ~ 阈值 + 检查间隔」之间。
+        </p>
+
+        {deferred !== null && deferred.tasks.length > 0 && (
+          <>
+            <p style={s.listHead}>队列明细（{deferred.pending} 条，顶层 {deferred.pendingTop}）：</p>
+            <ul style={s.list}>
+              {deferred.tasks.map((t, i) => (
+                <li key={i}>{t.parentKey !== '' ? '└ ' : ''}{t.title}{t.stagedBy !== '' ? ' · ' + t.stagedBy : ''}</li>
+              ))}
+            </ul>
+          </>
+        )}
+
+        {deferred !== null && deferred.scriptSource === 'bundled' && (
+          <p style={s.hint}>
+            当前用的是插件自带的脚本（{deferred.bundledScriptPath}）；点「重载定时器」会把定时器指向它，或手动复制到
+            {' '}<b>~/.dsh/scripts/ticktick-pending.mjs</b>。
+          </p>
+        )}
+        {deferred !== null && deferred.timer.supported && !deferred.timer.loaded && (
+          <p style={s.statusWarn}>定时器未运行——队列不会被自动写入；点「重载定时器」安装/重载。</p>
+        )}
+        {deferredMsg !== '' && <div style={s.msg}>{deferredMsg}</div>}
+      </div>
+
       {msg !== '' && <div style={s.msg}>{msg}</div>}
     </div>
   )
