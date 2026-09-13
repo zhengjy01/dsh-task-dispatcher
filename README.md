@@ -30,6 +30,8 @@ dsh plugin --profile web add link:/path/to/dsh-task-dispatcher
 # restart dsh web to activate
 ```
 
+Current release: **v0.2.0** ([CHANGELOG](CHANGELOG.md) · [Releases](https://github.com/zhengjy01/dsh-task-dispatcher/releases) · [npm](https://www.npmjs.com/package/dsh-task-dispatcher)).
+
 ## Dev
 
 ```sh
