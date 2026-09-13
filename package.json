@@ -1,6 +1,6 @@
 {
   "name": "dsh-task-dispatcher",
-  "version": "0.1.5",
+  "version": "0.2.0",
   "description": "Task dispatcher for DeepSeek Harness: use TickTick (滴答清单) 5️⃣AI as the daily task dispatcher — a cordis timer pulls today's due tasks each morning, writes them to the workspace task file, and notifies (flomo + macOS) so the agent works through them and writes results back to TickTick",
   "type": "module",
   "main": "lib/index.js",
