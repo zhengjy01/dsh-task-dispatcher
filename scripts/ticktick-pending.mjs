@@ -104,6 +104,11 @@ function dueToApi(dateStr) {
   return dateStr && /^\d{4}-\d{2}-\d{2}$/.test(dateStr) ? `${dateStr}T00:00:00+0800` : dateStr;
 }
 
+// 滴答会把 `#词` 解析成任务标签：标题与描述里的半角 # 一律换全角 ＃（2026-09-14 规则；#91 仍读作 ＃91）
+function escapeHashes(s) {
+  return String(s == null ? '' : s).replace(/#/g, '＃');
+}
+
 /** DSH 整体是否已经安静够久 */
 function newestSessionMtime() {
   let newest = 0;
@@ -232,7 +237,7 @@ function cmdStatus() {
   if (q.tasks.length) {
     console.log('  明细：');
     for (const t of q.tasks) {
-      console.log(`    - ${t.parentKey ? '  └ ' : ''}${t.title}  [${t.dueDate || '今天'}] ${t.stagedBy ? '· ' + t.stagedBy : ''}`);
+      console.log(`    - ${t.parentKey ? '  └ ' : ''}${t.title}  [${t.dueDate || '无日期'}] ${t.stagedBy ? '· ' + t.stagedBy : ''}`);
     }
   }
 }
@@ -279,15 +284,17 @@ function cmdStage(flags) {
     let parentKey = t.parentKey || null;
     if (parentKey && keyMap.has(parentKey)) parentKey = keyMap.get(parentKey);
     if (!t.title) throw new Error('任务缺少 title');
-    if (existingTitles.has(t.title)) {
-      log(`  跳过（队列里已有同名）：${t.title}`);
+    const title = escapeHashes(String(t.title).trim());
+    if (existingTitles.has(title)) {
+      log(`  跳过（队列里已有同名）：${title}`);
       continue;
     }
     const entry = {
       key,
-      title: String(t.title).trim(),
-      content: t.content || '',
-      dueDate: t.dueDate || todayLocal(),
+      title,
+      content: escapeHashes(t.content || ''),
+      // To do 不带日期（2026-09-14 规则）：未显式传 dueDate 就保持无日期
+      dueDate: t.dueDate || null,
       tags: Array.isArray(t.tags) && t.tags.length ? t.tags : q.tags,
       projectId: t.projectId || q.projectId,
       parentKey,
@@ -355,13 +362,13 @@ async function cmdFlush(flags) {
       return 'dry-run';
     }
     const body = {
-      title: t.title,
+      title: escapeHashes(t.title),
       projectId: t.projectId || q.projectId,
-      content: t.content || '',
+      content: escapeHashes(t.content || ''),
       tags: t.tags?.length ? t.tags : ['ai'],
-      // 永不掉进过去：暂存那天到现在已跨天时，顺延到实际写入当天
-      dueDate: dueToApi(t.dueDate && t.dueDate > todayLocal() ? t.dueDate : todayLocal()),
     };
+    // 落 To do 不带日期（2026-09-14 规则）：只有显式传了 dueDate 才写；不再补默认/顺延
+    if (t.dueDate) body.dueDate = dueToApi(t.dueDate);
     if (parentId) body.parentId = parentId;
     const res = await withAuth(creds, (c) => api(c, 'POST', '/task', body));
     if (res.status === 200 && res.json?.id) {
