@@ -6,6 +6,29 @@
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-16
+
+### ⚠️ 破坏性变更 (BREAKING)
+
+- feat(scripts)!: To do 任务默认不设日期 + 标题/描述半角 # 转全角 ＃
+
+### 其它 (Changed)
+
+- docs(readme): 版本行补 v0.3.0（CHANGELOG / Releases / npm 链接）
+
+### 兼容性 (Compatibility)
+
+- DSH：`>=0.1.5-rc.1`
+- Node：`^22.19.0 || >=24.0.0`
+- DSH peer：^0.1.0-rc.6 || ^0.1.1-rc.1 || ^0.1.2-alpha.1 || ^0.1.5-rc.1
+- 运行时依赖：`dsh-ticktick@^0.1.4`
+
+### 迁移说明 (Migration)
+
+> 破坏性版本必须在这里写清「用户要改什么」。发布后在 GitHub Release 同步一份。
+
+- feat(scripts)!: To do 任务默认不设日期 + 标题/描述半角 # 转全角 ＃
+
 ## [0.3.0] - 2026-09-13
 
 ### 新增 (Added)
