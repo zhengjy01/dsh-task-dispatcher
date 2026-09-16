@@ -35,7 +35,7 @@ dsh plugin --profile web add link:/path/to/dsh-task-dispatcher
 # 重启 dsh web 生效
 ```
 
-当前版本：**v0.3.0**（[CHANGELOG](CHANGELOG.md) · [Releases](https://github.com/zhengjy01/dsh-task-dispatcher/releases) · [npm](https://www.npmjs.com/package/dsh-task-dispatcher)）。
+当前版本：**v0.4.0**（[CHANGELOG](CHANGELOG.md) · [Releases](https://github.com/zhengjy01/dsh-task-dispatcher/releases) · [npm](https://www.npmjs.com/package/dsh-task-dispatcher)）。
 
 ## 配置（`~/.dsh/dsh-task-dispatcher.json`，0600）
 
