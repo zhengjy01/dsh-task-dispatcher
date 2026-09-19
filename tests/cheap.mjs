@@ -20,6 +20,8 @@ process.env.DSH_TASK_DISPATCHER_CONFIG = path.join(root, 'config.json')
 
 const {
   DispatcherStore,
+  DISPATCHER_API,
+  makeRoutes,
   OFFICIAL_2026_WINDOWS,
   LEGACY_UTC_WINDOWS,
   evaluateCheapMode,
@@ -240,6 +242,35 @@ console.log('\nrun 7: 排队 / 持久化 / 到点 flush / skip / 关闭')
   check('关闭省钱模式：高峰照跑', offRun.mode === 'executed' && offRun.executed === 2, JSON.stringify(offRun.mode))
   check('关闭后遗留队列被排空执行', ranOff.includes('cheap-5') && ranOff.includes('cheap-6'), JSON.stringify(ranOff))
   check('队列已清空', (await store.view()).cheapQueueCount === 0)
+}
+
+console.log('\nrun 8: /status 路由附带实时省钱判定（面板与外部 watcher 用）')
+{
+  const store = new DispatcherStore()
+  await store.patch({ cheapMode: true, cheapPreset: 'official-2026', cheapStrategy: 'wait', cheapMarginMinutes: 0 })
+  const routes = makeRoutes({ store, api: {} })
+  const route = routes.find((r) => r.path === DISPATCHER_API.status)
+  /** Minimal loopback fake req/res so the handler can run outside a server. */
+  const call = async (method) => {
+    let status = 0
+    let payload = ''
+    const res = {
+      writeHead: (code) => { status = code },
+      end: (body) => { payload = body },
+    }
+    const req = { method, socket: { remoteAddress: '127.0.0.1' }, headers: { host: '127.0.0.1:3080', 'sec-fetch-site': 'same-origin' } }
+    await route.handler(req, res)
+    return { status, body: JSON.parse(payload) }
+  }
+  const result = await call('GET')
+  check('GET /status 返回 200', result.status === 200, result.status)
+  check('含 cheapMode / peakWindowsText', result.body.cheapMode === true && result.body.peakWindowsText.includes('09:00-12:00'), JSON.stringify(result.body.peakWindowsText))
+  check('含实时判定字段（inPeakNow / cheapCanRunNow / cheapNextStartLabel / cheapReason）',
+    typeof result.body.inPeakNow === 'boolean' && typeof result.body.cheapCanRunNow === 'boolean' &&
+    typeof result.body.cheapNextStartLabel === 'string' && typeof result.body.cheapReason === 'string',
+    JSON.stringify({ inPeakNow: result.body.inPeakNow, canRun: result.body.cheapCanRunNow }))
+  const inPeakNow = evaluateCheapMode(await store.load(), new Date()).inPeak
+  check('实时判定与纯函数一致', result.body.inPeakNow === inPeakNow, JSON.stringify({ route: result.body.inPeakNow, pure: inPeakNow }))
 }
 
 await rm(root, { recursive: true, force: true })

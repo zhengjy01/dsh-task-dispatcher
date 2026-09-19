@@ -43,6 +43,11 @@ export interface DispatcherConfigView {
   nextCheapStartAt: string
   cheapQueue: { id: string; title: string; queuedAt: string }[]
   cheapQueueCount: number
+  /** 实时省钱判定（status 路由附带；未知时缺省）。 */
+  inPeakNow?: boolean
+  cheapCanRunNow?: boolean
+  cheapNextStartLabel?: string
+  cheapReason?: string
   configPath: string
 }
 

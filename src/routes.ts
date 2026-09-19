@@ -11,6 +11,7 @@ import type { DispatcherStore } from './store.ts'
 import type { TickTickApi } from 'dsh-ticktick'
 import { doDispatch } from './dispatch.ts'
 import { runAutoExecuteGated } from './executor.ts'
+import { evaluateCheapMode } from './cheap.ts'
 import { DeferredController } from './deferred.ts'
 import { listWorkspaces } from './workspaces.ts'
 
@@ -103,6 +104,24 @@ export function makeRoutes(deps: RouteContext) {
     return true
   }
 
+  /**
+   * Status payload shared by GET /config, POST /config and GET /status: the
+   * persisted view plus the LIVE 省钱模式 decision for `now` (so the panel and
+   * any watcher see the current peak/off-peak state and the next run time, not
+   * just the saved queue).
+   */
+  const statusPayload = async (source: DispatcherStore): Promise<Record<string, unknown>> => {
+    const [view, cfg] = [await source.view(), await source.load()]
+    const decision = evaluateCheapMode(cfg, new Date())
+    return {
+      ...view,
+      inPeakNow: decision.inPeak,
+      cheapCanRunNow: decision.canRunNow,
+      cheapNextStartLabel: decision.nextCheapStartLabel,
+      cheapReason: decision.reason,
+    }
+  }
+
   return [
     {
       // Tiny liveness probe: the release-kit portability gate (and any external
@@ -121,7 +140,7 @@ export function makeRoutes(deps: RouteContext) {
         const method = req.method ?? 'GET'
         if (method === 'GET') {
           if (!guard(req, res, 'GET')) return
-          writeJson(res, 200, await store.view())
+          writeJson(res, 200, await statusPayload(store))
           return
         }
         if (method === 'POST') {
@@ -131,7 +150,8 @@ export function makeRoutes(deps: RouteContext) {
             writeJson(res, 400, { error: 'invalid JSON body' })
             return
           }
-          writeJson(res, 200, await store.patch(body))
+          await store.patch(body)
+          writeJson(res, 200, await statusPayload(store))
           return
         }
         writeJson(res, 405, { error: `method not allowed: ${method}` })
@@ -142,7 +162,7 @@ export function makeRoutes(deps: RouteContext) {
       path: DISPATCHER_API.status,
       handler: async (req: IncomingMessage, res: ServerResponse) => {
         if (!guard(req, res, 'GET')) return
-        writeJson(res, 200, await store.view())
+        writeJson(res, 200, await statusPayload(store))
       },
     },
     {

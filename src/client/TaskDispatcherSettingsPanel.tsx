@@ -357,7 +357,20 @@ export function TaskDispatcherSettingsPanel(): JSX.Element {
             {view !== null && view.cheapMode && (
               <p style={s.hint}>
                 当前口径：{view.cheapPresetLabel} · 高峰时段：{view.peakWindowsText || '（无，一直空闲）'}<br />
-                下次执行时间：{view.nextCheapStartAt !== '' ? view.nextCheapStartAt : '（当前空闲，立即可执行）'} · 排队任务：{view.cheapQueueCount} 项
+                当前时段：
+                {view.inPeakNow === undefined
+                  ? '（读取中）'
+                  : view.inPeakNow
+                    ? '高峰（贵），不执行'
+                    : (view.cheapCanRunNow !== false ? '空闲（优惠），可执行' : '空闲但接近高峰，暂不执行')}
+                {view.cheapReason ? ' · ' + view.cheapReason : ''}<br />
+                下次执行时间：
+                {view.nextCheapStartAt !== ''
+                  ? view.nextCheapStartAt
+                  : (view.cheapNextStartLabel !== undefined && view.cheapNextStartLabel !== ''
+                    ? view.cheapNextStartLabel
+                    : (view.cheapCanRunNow === false ? '（等待下个空闲时段）' : '（当前空闲，立即可执行）'))}
+                {' '}· 排队任务：{view.cheapQueueCount} 项
                 {view.cheapQueueCount > 0 ? '（' + view.cheapQueue.map((t) => t.title).join('；') + '）' : ''}
               </p>
             )}
