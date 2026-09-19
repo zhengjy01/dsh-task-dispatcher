@@ -27,6 +27,7 @@
  */
 import type { DispatcherStore } from './store.ts';
 import type { DispatchedTask } from './dispatch.ts';
+import { type CheapDecision } from './cheap.ts';
 /** Outcome of one worker subprocess. */
 export interface WorkerResult {
     ok: boolean;
@@ -107,3 +108,53 @@ export declare function runAutoExecute(store: DispatcherStore, api: {
     /** Injectable notification transport (tests / custom channels). */
     notify?: (text: string) => Promise<void>;
 }): Promise<AutoExecOutcome>;
+/** Options for the cheap-mode gated execution (threaded into runAutoExecute). */
+export interface GatedRunOptions {
+    /** 手动触发时绕过省钱模式（立刻执行，不等空闲时段）。 */
+    ignoreCheapMode?: boolean;
+    /** Push the per-task result notifications (real callers set it). */
+    notifyResult?: boolean;
+    /** Injectable clock (tests / deterministic decisions). */
+    now?: Date;
+    spawn?: (prompt: string, opts: SpawnWorkerOptions) => Promise<WorkerResult>;
+    onComplete?: (task: DispatchedTask) => Promise<void>;
+    notify?: (text: string) => Promise<void>;
+}
+/** Outcome of a gated execution: ran now / queued / skipped / disabled. */
+export interface GatedRunResult {
+    mode: 'executed' | 'queued' | 'skipped' | 'disabled';
+    outcome: AutoExecOutcome | null;
+    executed: number;
+    completed: number;
+    failed: number;
+    skipped: number;
+    /** Number of tasks left waiting for the cheap window. */
+    queued: number;
+    nextCheapStartAt: string;
+    nextCheapStartLabel: string;
+    inPeak: boolean;
+    decision: CheapDecision | null;
+    log: string[];
+}
+/**
+ * 带「省钱模式」门控的自动执行。
+ *
+ * 判定点刻意只在「准备开 worker 之前」：拉取节奏、过滤、串行执行都不参与判定。
+ * - 省钱模式关闭（或 ignoreCheapMode）→ 与旧版完全一致，立刻执行。
+ * - 高峰期 → 策略 wait 把任务落盘排队并通知；策略 skip 本轮跳过并通知。
+ * - 空闲期且距下个高峰 ≥ 余量 → 立刻执行（同时把之前排队的任务一起跑了）。
+ */
+export declare function runAutoExecuteGated(store: DispatcherStore, api: {
+    completeTask(projectId: string, taskId: string): Promise<void>;
+}, tasks: DispatchedTask[], opts?: GatedRunOptions): Promise<GatedRunResult>;
+/**
+ * 定时器每分钟调用：队列到点（进入空闲）就把排队任务跑掉。
+ *
+ * 与拉取节奏解耦——即便 dispatchIntervalMinutes 很长（或为 0），排队任务也会在
+ * 空闲开始后的下一次检查触发。队列在开跑前先清空，避免进程被中断后重复执行。
+ *
+ * @returns the outcome, or null when there is nothing due (empty queue / still peak / autoExecute off).
+ */
+export declare function flushCheapQueueIfDue(store: DispatcherStore, api: {
+    completeTask(projectId: string, taskId: string): Promise<void>;
+}, opts?: GatedRunOptions): Promise<GatedRunResult | null>;

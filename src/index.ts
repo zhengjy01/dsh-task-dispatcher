@@ -27,7 +27,7 @@ import { DispatcherStore } from './store.ts'
 import { buildTools } from './tools.ts'
 import { makeRoutes, DISPATCHER_API } from './routes.ts'
 import { doDispatch, localDateString } from './dispatch.ts'
-import { runAutoExecute } from './executor.ts'
+import { runAutoExecuteGated, flushCheapQueueIfDue } from './executor.ts'
 
 /** Stable cordis plugin name. */
 export const name = 'task-dispatcher'
@@ -43,6 +43,7 @@ export const DISPATCHER_GUIDANCE =
   '本机已安装 dsh-task-dispatcher 插件（滴答清单任务派发器）：每隔一段可配置的间隔（默认每 30 分钟）自动从滴答清单「5️⃣AI」（或配置的来源）拉取今天到期/逾期的任务，写入今日任务文件（默认 DSH_HOME 下的 dsh-task-dispatcher/today-tasks.md，DSH_HOME 未设时回落 ~/.dsh），' +
   '并在任务发生变化时发送通知（默认走**微信**：通过本机微信机器人 ClawBot 的网关 127.0.0.1:51235 把消息发到扫码登录的那个微信；flomo / macOS 通道保留，由配置开关决定）。工具：dispatcher_status（状态）、dispatcher_config（配置拉取间隔/来源/过滤/通知渠道/自动执行/worker 超时；testWechat 可发测试消息）、dispatcher_run（立即拉取一次）、dispatcher_report（执行完/会话结束后发一条汇总，默认发微信）。' +
   '自动执行的单个 worker 有超时保护（workerTimeoutMinutes，默认 30 分钟，到点 SIGKILL），可在设置面板或 dispatcher_config 调整。' +
+  '**省钱模式（cheapMode，默认关）**：开启后自动执行只在 DeepSeek 空闲（优惠）时段开跑，高峰期把任务排队到下一个空闲开始点（cheapStrategy=wait）或本轮跳过（skip）；官方口径为北京时间周一至周五 09:00–12:00、14:00–18:00 为高峰（其余空闲），时段可用 cheapPreset/peakWindows/cheapTimezone 配置，排队状态落盘、重启不丢；dispatcher_run 默认同样遵守，可用 ignoreCheapMode=true 立刻绕过。' +
   '你任务都是随手写进滴答清单的，插件会自动跟上：随时往清单里加任务，下次拉取就会带进来。' +
   '当你开始一天的工作时，先用 read 读取今日任务文件，逐项执行；完成的用 ticktick_complete 回写滴答清单，并把结果落到 Obsidian 知识库/项目档案。' +
   '**执行结果回执（notifyResult，默认开）**：自动执行的每个任务在 worker 结束后会**自动**推一条简明结果（✅/❌ + 标题 + 一句话结果）到已开启的通知通道（默认微信），多任务再补一条批次汇总——这条不依赖 worker 自己记得汇报。每次执行完/告一段落后，还要调用 dispatcher_report 把本次完成/失败/跳过情况汇总（total/completed/failed/skipped + 可选 summary），它会按配置把汇总发到微信（默认通道）。' +
@@ -119,8 +120,18 @@ export function apply(ctx: Context, config?: Config): void {
         if (busy) return
         busy = true
         try {
-          const cfg = await store.load()
+          let cfg = await store.load()
           if (!cfg.enabled) return
+          // 1) 省钱模式：排队任务到点（进入空闲时段）就执行。该检查与拉取节奏
+          //    解耦——即便 dispatchIntervalMinutes=0，排队任务也会在空闲开始后
+          //    的下一次检查触发；排队状态落盘，宿主重启也不丢。
+          if (cfg.autoExecute && cfg.cheapQueue.length > 0) {
+            const flushed = await flushCheapQueueIfDue(store, api, { notifyResult: true })
+            if (flushed !== null) {
+              ctx.logger?.info?.('[dsh-task-dispatcher] cheap flush: ' + flushed.log.join(' | '))
+              cfg = await store.load()
+            }
+          }
           const minutes = cfg.dispatchIntervalMinutes
           if (minutes <= 0) return
           const now = Date.now()
@@ -128,11 +139,13 @@ export function apply(ctx: Context, config?: Config): void {
           if (last !== 0 && now - last < minutes * 60 * 1000) return
           const result = await doDispatch(store, api)
           ctx.logger?.info?.('[dsh-task-dispatcher] pull: ' + result.message)
-          // Auto-execute each pulled task in its own headless session (serial).
+          // Auto-execute each pulled task in its own headless session (serial),
+          // gated by 省钱模式 when it is enabled.
           if (cfg.autoExecute && result.tasks.length > 0) {
-            ctx.logger?.info?.('[dsh-task-dispatcher] auto-executing ' + result.tasks.length + ' task(s), serial')
-            const exec = await runAutoExecute(store, api, result.tasks, { notifyResult: true })
-            ctx.logger?.info?.('[dsh-task-dispatcher] auto-execute: ' + exec.log.join(' | '))
+            const gated = await runAutoExecuteGated(store, api, result.tasks, { notifyResult: true })
+            const counts = 'executed=' + gated.executed + ' completed=' + gated.completed +
+              ' failed=' + gated.failed + ' queued=' + gated.queued
+            ctx.logger?.info?.('[dsh-task-dispatcher] auto-execute [' + gated.mode + '] ' + counts + ': ' + gated.log.join(' | '))
           }
         } catch (error) {
           ctx.logger?.warn?.('[dsh-task-dispatcher] pull failed: ' + String(error instanceof Error ? error.message : error))
@@ -148,12 +161,45 @@ export function apply(ctx: Context, config?: Config): void {
 
 /** Re-exports for host consumers and the smoke tests. */
 export { dshHome, pluginPath } from './home.ts'
-export { DispatcherStore, configPath, DEFAULT_CONFIG_FILE, DEFAULT_TASK_FILE, DEFAULT_WORKER_PROMPT, DEFAULT_WORKER_TIMEOUT_MINUTES, type DispatcherConfig, type DispatcherConfigView } from './store.ts'
+export { DispatcherStore, configPath, DEFAULT_CONFIG_FILE, DEFAULT_TASK_FILE, DEFAULT_WORKER_PROMPT, DEFAULT_WORKER_TIMEOUT_MINUTES, type CheapStrategy, type DispatcherConfig, type DispatcherConfigView, type QueuedTask } from './store.ts'
 export { doDispatch, notifyText, localDateString, type DispatchedTask, type DispatchResult, type NotifyChannel } from './dispatch.ts'
 export { flomoMemo, macNotify, wechatSend, wechatRecipient, wechatStateDir, escapeHashes, buildFlomoContent, HASH_SAFE, WECHAT_GATEWAY_URL, type WechatOptions } from './notify.ts'
 export { dispatcherStatusTool, dispatcherConfigTool, dispatcherRunTool, dispatcherReportTool, buildTools, type ToolContext } from './tools.ts'
 export { makeRoutes, DISPATCHER_API } from './routes.ts'
-export { runAutoExecute, spawnWorker, buildWorkerPrompt, summarizeWorkerOutput, DEFAULT_WORKER_TIMEOUT_MS, type WorkerResult, type TaskExecResult, type AutoExecOutcome } from './executor.ts'
+export { runAutoExecute, runAutoExecuteGated, flushCheapQueueIfDue, spawnWorker, buildWorkerPrompt, summarizeWorkerOutput, DEFAULT_WORKER_TIMEOUT_MS, type WorkerResult, type TaskExecResult, type AutoExecOutcome, type GatedRunOptions, type GatedRunResult } from './executor.ts'
+export {
+  CHEAP_PRESETS,
+  DEFAULT_CHEAP_MARGIN_MINUTES,
+  DEFAULT_CHEAP_PRESET,
+  DEFAULT_CHEAP_TIMEZONE,
+  LEGACY_UTC_WINDOWS,
+  OFFICIAL_2026_WINDOWS,
+  effectiveCheapTimezone,
+  effectiveMarginMinutes,
+  effectivePeakWindows,
+  evaluateCheapMode,
+  formatDateTimeInTimezone,
+  formatDays,
+  formatPeakWindowLine,
+  formatPeakWindows,
+  formatPeakWindowsText,
+  hhmmToMinutes,
+  isKnownPreset,
+  isPeak,
+  localWeekMinutes,
+  minutesToHhmm,
+  nextCheapStart,
+  nextPeakStart,
+  normalizePreset,
+  parsePeakWindow,
+  parsePeakWindows,
+  parsePeakWindowsText,
+  peakMask,
+  type CheapDecision,
+  type CheapGateConfig,
+  type CheapPreset,
+  type PeakWindow,
+} from './cheap.ts'
 export { listWorkspaces, resolveWorkspacePath, resolveWorkspaceTitle, workspaceStorePath, DEFAULT_WORKSPACE_STORE, type WorkspaceInfo } from './workspaces.ts'
 export {
   DeferredController,

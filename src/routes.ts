@@ -10,6 +10,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { DispatcherStore } from './store.ts'
 import type { TickTickApi } from 'dsh-ticktick'
 import { doDispatch } from './dispatch.ts'
+import { runAutoExecuteGated } from './executor.ts'
 import { DeferredController } from './deferred.ts'
 import { listWorkspaces } from './workspaces.ts'
 
@@ -150,8 +151,27 @@ export function makeRoutes(deps: RouteContext) {
       handler: async (req: IncomingMessage, res: ServerResponse) => {
         if (!guard(req, res, 'POST')) return
         try {
+          const body = await readJsonBody(req)
+          const ignoreCheapMode = body?.ignoreCheapMode === true
           const result = await doDispatch(store, api)
-          writeJson(res, 200, result)
+          let cheap: Record<string, unknown> | undefined
+          if (result.ok && result.tasks.length > 0) {
+            const cfg = await store.load()
+            if (cfg.autoExecute) {
+              const gated = await runAutoExecuteGated(store, api, result.tasks, { notifyResult: true, ignoreCheapMode })
+              cheap = {
+                mode: gated.mode,
+                executed: gated.executed,
+                completed: gated.completed,
+                failed: gated.failed,
+                queued: gated.queued,
+                nextCheapStartAt: gated.nextCheapStartAt,
+                nextCheapStartLabel: gated.nextCheapStartLabel,
+                log: gated.log,
+              }
+            }
+          }
+          writeJson(res, 200, cheap === undefined ? result : { ...result, cheap })
         } catch (error) {
           writeJson(res, 200, { ok: false, message: '派发失败: ' + String(error instanceof Error ? error.message : error) })
         }

@@ -17,6 +17,7 @@
 - **自动执行（autoExecute）**：开启后，为每个拉到的新任务**单独开一个 `dsh --profile headless` 会话**（串行，一任务一会话）去执行；worker 只带基础工具（bash/文件/glob/grep/网络/目标工具）；执行成功即用 `ticktick_complete` 回写滴答清单勾掉；失败任务在重试冷却期内不重复跑。
 - **选择执行会话的工作区（workerWorkspaceId）**：默认 worker 会话在用户主目录下运行；配置某个 DSH 工作区 id 后，worker 以该工作区目录为 cwd 启动，产生的会话会在该目录下读写文件，并在 GUI 侧边栏自动归入该工作区。设置面板提供工作区下拉（列表来自 `~/.dsh/storages/workspace.json`），留空 = 默认主目录。
 - **worker 超时（workerTimeoutMinutes）**：每个自动执行的 worker 到点被 SIGKILL，默认 **30** 分钟（范围 1–1440），可在 `dispatcher_config` / 设置面板调整。此前是写死的 10 分钟常量，长任务跑到 10 分钟就被杀并误报为失败。
+- **省钱模式（cheapMode，默认关）**：勾选后自动执行**只在 DeepSeek 空闲（优惠）时段开跑**，高峰期把任务排队到下一个空闲开始点（`cheapStrategy=wait`）或本轮跳过（`skip`）。判定点只在「准备开 worker 之前」——拉取节奏、过滤、串行执行全部不变；**关闭时行为与旧版 100% 一致**。官方口径（2026-08-17 起峰谷定价）：高峰 = 北京时间**周一至周五 09:00–12:00、14:00–18:00**，其余时间空闲（约半价）；代码里时段**不写死**，可用 `cheapPreset`（`official-2026` / `legacy-utc` 旧版 UTC 16:30–00:30 / `custom`）+ `peakWindows` + `cheapTimezone` 配置。排队任务与 `nextCheapStartAt` 落盘，**DSH 重启不丢**；`dispatcher_run` 默认同样遵守，传 `ignoreCheapMode: true` 可立刻绕过。通知文案区分「省钱模式：已排入 XX:XX 空闲时段执行」与正常执行。
 - **延迟同步面板（agent → 滴答清单）**：设置页新增区块，直接配置并查看这条回写链路——**静默阈值**（分钟）、单会话顶层上限、定时器检查间隔（秒，改完自动重载 launchd），并显示队列条数/明细、当前静默（**全机** DSH 口径）、定时器是否在跑、上次写入结果。按钮：保存阈值、立即写入、强制写入、重载定时器。控制面与执行面分离：写入仍由独立脚本 + launchd 完成（**DSH 关着也能写**），插件只做配置与观测，两者共用同一个队列文件，不重复实现任何写入逻辑。路由：`GET /api/dsh-task-dispatcher/deferred`、`POST .../deferred/{config,flush,timer}`。
 - **agent 工具**：`dispatcher_status` / `dispatcher_config` / `dispatcher_run` + Web 设置面板「任务派发器」。
 
@@ -35,7 +36,7 @@ dsh plugin --profile web add link:/path/to/dsh-task-dispatcher
 # 重启 dsh web 生效
 ```
 
-当前版本：**v0.4.0**（[CHANGELOG](CHANGELOG.md) · [Releases](https://github.com/zhengjy01/dsh-task-dispatcher/releases) · [npm](https://www.npmjs.com/package/dsh-task-dispatcher)）。
+当前版本：**v0.5.0**（[CHANGELOG](CHANGELOG.md) · [Releases](https://github.com/zhengjy01/dsh-task-dispatcher/releases) · [npm](https://www.npmjs.com/package/dsh-task-dispatcher)）。
 
 ## 配置（`~/.dsh/dsh-task-dispatcher.json`，0600）
 
@@ -59,6 +60,13 @@ dsh plugin --profile web add link:/path/to/dsh-task-dispatcher
 | `notifyFlomo` / `flomoTag` | flomo 通知与标签（仅任务有变化时） | `true` / `AI/DSH/派发` |
 | `notifyMac` | macOS 通知（仅任务有变化时） | `true` |
 | `taskFile` | 今日任务文件路径 | `~/.dsh/dsh-task-dispatcher/today-tasks.md` |
+| `cheapMode` | 省钱模式：自动执行只在 DeepSeek 空闲时段开跑 | `false` |
+| `cheapPreset` | 时段口径：`official-2026`（官方现行）/ `legacy-utc`（旧版 UTC 16:30–00:30 空闲）/ `custom` | `official-2026` |
+| `peakWindows` / `peakWindowsText` | 高峰时段黑名单（优惠 = 非高峰）；`peakWindowsText` 每行 `1,2,3,4,5 09:00-12:00`（0=周日…6=周六，`start>end` 跨午夜） | 周中 09–12 / 14–18 |
+| `cheapTimezone` | 解释高峰时段的 IANA 时区 | `Asia/Shanghai` |
+| `cheapStrategy` | 高峰期策略：`wait`=排队到下个空闲；`skip`=本轮跳过 | `wait` |
+| `cheapMarginMinutes` | 尾部余量（距高峰不足则排到下段；0=关闭尾部保护） | `0` |
+| `nextCheapStartAt` / `cheapQueue` | 排队状态（落盘，重启不丢；自动维护，无需手改） | `''` / `[]` |
 
 ## 使用
 

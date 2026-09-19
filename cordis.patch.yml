@@ -19,3 +19,8 @@
         notifyFlomo: true        # 有任务变化时推送 flomo
         flomoTag: "AI/DSH/派发"   # flomo 标签
         notifyMac: true          # 有任务变化时 macOS 通知
+        cheapMode: false         # 省钱模式：勾选后自动执行只在 DeepSeek 空闲/优惠时段开跑
+        cheapPreset: "official-2026" # 时段口径：official-2026（官方现行）/ legacy-utc / custom
+        cheapStrategy: "wait"    # 高峰期策略：wait = 排队等到下个空闲开始；skip = 本轮跳过
+        cheapMarginMinutes: 0    # 尾部余量分钟（0 = 关闭尾部保护；建议 15 或 workerTimeoutMinutes）
+        cheapTimezone: "Asia/Shanghai" # 解释高峰时段的 IANA 时区

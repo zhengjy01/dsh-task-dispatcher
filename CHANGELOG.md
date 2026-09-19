@@ -6,6 +6,36 @@
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-09-19
+
+### 新增 (Added)
+
+- **省钱模式（`cheapMode`，默认关）**：勾选后**自动执行**只在 DeepSeek 空闲（优惠）时段开跑。官方 2026-08-17 起的峰谷定价口径（已按定价页原文核对）：高峰 = 北京时间**周一至周五 09:00–12:00、14:00–18:00**，其余时间（工作日 12:00–14:00、18:00–次日 09:00、周六周日全天）为空闲、约半价。
+  - **判定点只在「准备开 worker 之前」**：拉取节奏（`dispatchIntervalMinutes`）、「今天到期/逾期 + 无截止」过滤、串行执行逻辑全部不变；`cheapMode=false` 时行为与 0.4.0 **100% 一致**。
+  - **排队调度**：高峰期内把任务标为排队（`cheapQueue`），算出 `nextCheapStartAt`（12:00 / 14:00 / 18:00 / 次日 09:00 / 周一 09:00），两者**落盘**，宿主重启不丢；到点由定时器（与拉取节奏解耦）触发执行。
+  - **策略与余量**：`cheapStrategy` = `wait`（排队等到下个空闲开始）/ `skip`（本轮跳过）；`cheapMarginMinutes` 尾部余量（距下个高峰不足该值时不开跑，排到下个空闲段；默认 0 = 关闭，建议 15 或 `workerTimeoutMinutes`）。
+  - **时段可配置、能切 preset、禁止写死**：`cheapPreset` = `official-2026` / `legacy-utc`（旧版「每日 UTC 16:30–00:30 = 北京 00:30–08:30 空闲」口径）/ `custom`；自定义走 `peakWindows`（高峰黑名单，优惠 = 非高峰，天然覆盖周末）与 `peakWindowsText`（每行 `1,2,3,4,5 09:00-12:00`，0=周日…6=周六，`start>end` 支持跨午夜）；`cheapTimezone` 默认 `Asia/Shanghai`。
+  - **手动触发**：`dispatcher_run` 默认同样遵守省钱模式，新增 `ignoreCheapMode: true` 立刻绕过；Web 设置面板「立即拉取」同样支持。
+  - **通知与状态**：通知文案区分「💰 省钱模式：已排入 XX:XX 空闲时段执行」与正常执行；`dispatcher_status` 展示省钱模式开关、口径 preset、高峰时段表、当前时段、下次执行时间与排队任务数；Web 设置面板新增开关 + 时段编辑 + 当前状态。
+- **边界测试** `tests/cheap.mjs`（并入 `npm test`）：逐点验证工作日 12:00–14:00 / 18:00–次日 09:00、周五 18:00 之后到周一 09:00、周末全天可执行，工作日 09:00–12:00 / 14:00–18:00 不执行；preset 切换、尾部余量、排队持久化（重启不丢）、到点 flush、skip、`ignoreCheapMode`、关闭省钱模式的旧行为。
+
+### 其它 (Changed)
+
+- `dispatcher_status` / `dispatcher_config` 新增省钱模式字段与中文说明；`dispatcher_run` 输出新增 `autoMode` / `cheapQueued` / `nextCheapStartAt`。
+- 新增 `/api/dsh-task-dispatcher/run` 的 `ignoreCheapMode` 请求参数；开启 `autoExecute` 时该路由与工具一样走省钱门控。
+
+### 兼容性 (Compatibility)
+
+- DSH：`>=0.1.5-rc.1`
+- Node：`^22.19.0 || >=24.0.0`
+- DSH peer：^0.1.0-rc.6 || ^0.1.1-rc.1 || ^0.1.2-alpha.1 || ^0.1.5-rc.1
+- 运行时依赖：`dsh-ticktick@^0.1.4`
+
+### 迁移说明 (Migration)
+
+- 升级后默认 `cheapMode=false`，行为不变。要启用：设置面板勾选或 `dispatcher_config({ cheapMode: true })`。
+- 若你的 DeepSeek 时段口径与官方现行不同，用 `cheapPreset: "legacy-utc"` 切到旧口径，或用 `peakWindowsText` 自定义（会自动标记为 `custom`）。
+
 ## [0.4.0] - 2026-09-16
 
 ### ⚠️ 破坏性变更 (BREAKING)

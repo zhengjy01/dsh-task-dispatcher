@@ -12,8 +12,9 @@ import { TickTickApi } from 'dsh-ticktick'
 import type { DispatcherStore } from './store.ts'
 import { doDispatch, localDateString, notifyText, type NotifyChannel } from './dispatch.ts'
 import { flomoMemo, macNotify, wechatSend, type NotifyResult } from './notify.ts'
-import { runAutoExecute } from './executor.ts'
+import { runAutoExecuteGated } from './executor.ts'
 import { resolveWorkspaceTitle } from './workspaces.ts'
+import { CHEAP_PRESETS, evaluateCheapMode, formatPeakWindowLine, formatPeakWindows } from './cheap.ts'
 
 /** One text content block (the only render shape these tools emit). */
 function text(value: string): ContentBlock[] {
@@ -30,7 +31,7 @@ export interface ToolContext {
 export function dispatcherStatusTool(ctx: ToolContext) {
   return defineTool({
     name: 'dispatcher_status',
-    description: '查看 dsh-task-dispatcher 插件状态：是否启用、拉取间隔（分钟）、自动执行开关、自动执行会话的工作区、worker 超时（分钟）、任务来源清单、过滤方式、通知开关、最近一次派发结果（时间/数量/任务标题）与今日任务文件路径。不会泄露任何密钥。',
+    description: '查看 dsh-task-dispatcher 插件状态：是否启用、拉取间隔（分钟）、自动执行开关、自动执行会话的工作区、worker 超时（分钟）、省钱模式（开关/口径 preset/高峰时段表/策略/余量/下次执行时间/排队任务数）、任务来源清单、过滤方式、通知开关、最近一次派发结果（时间/数量/任务标题）与今日任务文件路径。不会泄露任何密钥。',
     parameters: {},
     output: {
       schema: {
@@ -65,6 +66,21 @@ export function dispatcherStatusTool(ctx: ToolContext) {
           lastTaskCount: { type: 'number' },
           lastTaskTitles: { type: 'array', items: { type: 'string' } },
           workerPrompt: { type: 'string' },
+          cheapMode: { type: 'boolean' },
+          cheapPreset: { type: 'string' },
+          cheapPresetLabel: { type: 'string' },
+          peakWindowLines: { type: 'array', items: { type: 'string' } },
+          peakWindowsText: { type: 'string' },
+          cheapTimezone: { type: 'string' },
+          cheapStrategy: { type: 'string' },
+          cheapMarginMinutes: { type: 'number' },
+          cheapMarginEffectiveMinutes: { type: 'number' },
+          nextCheapStartAt: { type: 'string' },
+          cheapQueueCount: { type: 'number' },
+          cheapQueueTitles: { type: 'array', items: { type: 'string' } },
+          inPeakNow: { type: 'boolean' },
+          cheapCanRunNow: { type: 'boolean' },
+          cheapNextStartLabel: { type: 'string' },
           configPath: { type: 'string' },
         },
       },
@@ -73,6 +89,8 @@ export function dispatcherStatusTool(ctx: ToolContext) {
     async execute() {
       try {
         const view = await ctx.store.view()
+        const cfg = await ctx.store.load()
+        const decision = evaluateCheapMode(cfg, new Date())
         const interval = view.dispatchIntervalMinutes === 0
           ? '已关闭定时'
           : ('每 ' + view.dispatchIntervalMinutes + ' 分钟自动拉取')
@@ -95,15 +113,41 @@ export function dispatcherStatusTool(ctx: ToolContext) {
           '执行结果回执：' + (view.notifyResult
             ? '开（自动执行的每个任务结束后推一条简明结果，多任务再补一条汇总）'
             : '关（不推送执行结果）'),
-          '今日任务文件：' + view.taskFile,
         ]
+        if (view.cheapMode) {
+          parts.push('省钱模式：开（' + view.cheapPresetLabel + '）')
+          parts.push('高峰时段：' + formatPeakWindows(view.peakWindows, view.cheapTimezone))
+          parts.push('省钱策略：' + (view.cheapStrategy === 'skip' ? '本轮跳过' : '排队等到下个空闲开始') +
+            ' · 尾部余量 ' + view.cheapMarginEffectiveMinutes + ' 分钟' +
+            (view.cheapMarginMinutes === 0 ? '（0 = 关闭尾部保护）' : ''))
+          parts.push('当前时段：' + (decision.inPeak ? '高峰（贵）' : (decision.canRunNow ? '空闲（优惠），可执行' : '空闲但接近高峰，暂不执行')) + ' · ' + decision.reason)
+          const nextRun = decision.canRunNow ? '' : (decision.nextCheapStartLabel || view.nextCheapStartAt)
+          if (nextRun !== '') parts.push('下次执行时间：' + nextRun)
+          parts.push('排队任务：' + view.cheapQueueCount + ' 项' +
+            (view.cheapQueueCount > 0 ? '（' + view.cheapQueue.map((t) => t.title).join('；') + '）' : ''))
+        } else {
+          parts.push('省钱模式：关（自动执行按现有时间逻辑，任何时候都可开跑；开启即只在空闲时段执行）')
+          parts.push('可选时段口径 preset：' + Object.keys(CHEAP_PRESETS).join(' / ') + ' / custom')
+          parts.push('高峰时段定义（开启后生效）：' + formatPeakWindows(view.peakWindows, view.cheapTimezone))
+        }
+        parts.push('今日任务文件：' + view.taskFile)
         if (view.lastDispatchAt) {
           parts.push('上次拉取：' + view.lastDispatchAt + ' · ' + view.lastTaskCount + ' 项')
           parts.push('任务列表：' + (view.lastTaskTitles.length > 0 ? view.lastTaskTitles.join('；') : '（空）'))
         } else {
           parts.push('上次拉取：（尚未拉取）')
         }
-        return { ok: true, message: parts.join('\n'), ...view }
+        const { peakWindows, cheapQueue, ...rest } = view
+        return {
+          ok: true,
+          message: parts.join('\n'),
+          ...rest,
+          peakWindowLines: peakWindows.map(formatPeakWindowLine),
+          cheapQueueTitles: cheapQueue.map((t) => t.title),
+          inPeakNow: decision.inPeak,
+          cheapCanRunNow: decision.canRunNow,
+          cheapNextStartLabel: decision.nextCheapStartLabel,
+        }
       } catch (error) {
         return { ok: false, message: '读取状态失败: ' + String(error instanceof Error ? error.message : error) }
       }
@@ -115,7 +159,7 @@ export function dispatcherStatusTool(ctx: ToolContext) {
 export function dispatcherConfigTool(ctx: ToolContext) {
   return defineTool({
     name: 'dispatcher_config',
-    description: '配置 dsh-task-dispatcher：enabled（总开关）、dispatchIntervalMinutes（每隔多少分钟自动拉取一次，0=关闭定时）、projectName 或 projectId（任务来源滴答清单，默认 5️⃣AI）、dueMode（today=今天到期/逾期，all=全部未完成）、includeUndated（是否含无截止任务）、notifyResult（自动执行结束后是否推送「每个任务的简明结果 + 批次汇总」，默认 true）、notifyWechat/notifyFlomo/notifyMac（通知通道开关：微信 ClawBot / flomo / macOS）、wechatGatewayUrl（ClawBot 网关地址，默认 http://127.0.0.1:51235）、wechatTo（微信接收人 id，留空自动用 ClawBot 扫码登录的那个账号）、wechatStateDir（ClawBot 状态目录，默认 ~/.dsh-wechat；也认环境变量 DSH_WECHAT_HOME）、testWechat（保存后立即发一条测试微信消息）、flomoTag（flomo 标签）、flomoStripBodyHash（发到 flomo 的通知/汇总正文里的井号# 是否替换成全角＃，避免 flomo 把#词误识别成标签；flomoTag 标签本身保留）、taskFile（今日任务文件路径）、autoExecute（是否自动执行：为每个拉到的新任务单独开一个 DSH 会话去执行）、workerWorkspaceId（执行会话运行在哪个 DSH 工作区，传空字符串=默认主目录；用 dispatcher_status 可看到工作区 id）、retryCooldownMinutes（失败任务重试冷却分钟）、workerTimeoutMinutes（单个执行会话的超时分钟数，默认 30，到点 SIGKILL 该 worker；范围 1–1440）、workerPrompt（执行会话的提示词模板，可用 {title}/{content}）、announceToAgent（是否在系统提示公告）。配置持久化到 DSH_HOME 下的 dsh-task-dispatcher.json（默认 ~/.dsh，0600）。传 reset: true 恢复默认。',
+    description: '配置 dsh-task-dispatcher：enabled（总开关）、dispatchIntervalMinutes（每隔多少分钟自动拉取一次，0=关闭定时）、projectName 或 projectId（任务来源滴答清单，默认 5️⃣AI）、dueMode（today=今天到期/逾期，all=全部未完成）、includeUndated（是否含无截止任务）、notifyResult（自动执行结束后是否推送「每个任务的简明结果 + 批次汇总」，默认 true）、notifyWechat/notifyFlomo/notifyMac（通知通道开关：微信 ClawBot / flomo / macOS）、wechatGatewayUrl（ClawBot 网关地址，默认 http://127.0.0.1:51235）、wechatTo（微信接收人 id，留空自动用 ClawBot 扫码登录的那个账号）、wechatStateDir（ClawBot 状态目录，默认 ~/.dsh-wechat；也认环境变量 DSH_WECHAT_HOME）、testWechat（保存后立即发一条测试微信消息）、flomoTag（flomo 标签）、flomoStripBodyHash（发到 flomo 的通知/汇总正文里的井号# 是否替换成全角＃，避免 flomo 把#词误识别成标签；flomoTag 标签本身保留）、taskFile（今日任务文件路径）、autoExecute（是否自动执行：为每个拉到的新任务单独开一个 DSH 会话去执行）、workerWorkspaceId（执行会话运行在哪个 DSH 工作区，传空字符串=默认主目录；用 dispatcher_status 可看到工作区 id）、retryCooldownMinutes（失败任务重试冷却分钟）、workerTimeoutMinutes（单个执行会话的超时分钟数，默认 30，到点 SIGKILL 该 worker；范围 1–1440）、workerPrompt（执行会话的提示词模板，可用 {title}/{content}）、announceToAgent（是否在系统提示公告）。**省钱模式**：cheapMode（勾选后自动执行只在 DeepSeek 空闲/优惠时段开跑；默认 false）、cheapPreset（时段口径 official-2026=官方现行「北京时间周一至周五 09:00–12:00、14:00–18:00 为高峰」/ legacy-utc=旧版 UTC 16:30–00:30 空闲 / custom）、peakWindowsText（自定义高峰时段，每行 `1,2,3,4,5 09:00-12:00`，0=周日…6=周六，start>end 表示跨午夜；空=一直空闲）、cheapTimezone（IANA 时区，默认 Asia/Shanghai）、cheapStrategy（wait=排队等到下个空闲开始 / skip=本轮跳过）、cheapMarginMinutes（尾部余量分钟，0=关闭尾部保护；建议设为 15 或 workerTimeoutMinutes，避免任务跑一半掉进高峰）。配置持久化到 DSH_HOME 下的 dsh-task-dispatcher.json（默认 ~/.dsh，0600）。传 reset: true 恢复默认。',
     parameters: {
       enabled: { type: 'boolean', description: '插件总开关' },
       dispatchIntervalMinutes: { type: 'number', description: '每隔多少分钟自动拉取一次滴答清单（0 关闭定时）' },
@@ -140,6 +184,12 @@ export function dispatcherConfigTool(ctx: ToolContext) {
       workerTimeoutMinutes: { type: 'number', description: '单个执行会话的超时分钟数（默认 30；到点 SIGKILL 该 worker）' },
       workerPrompt: { type: 'string', description: '执行会话提示词模板（{title}/{content}）' },
       announceToAgent: { type: 'boolean', description: '是否在系统提示公告插件' },
+      cheapMode: { type: 'boolean', description: '省钱模式：自动执行只在 DeepSeek 空闲（优惠）时段开跑（默认 false）' },
+      cheapPreset: { type: 'string', description: '时段口径 preset：official-2026（官方现行）/ legacy-utc（旧版 UTC 16:30–00:30）/ custom' },
+      peakWindowsText: { type: 'string', description: '自定义高峰时段，每行 `1,2,3,4,5 09:00-12:00`（0=周日…6=周六；start>end 跨午夜；空=一直空闲）' },
+      cheapTimezone: { type: 'string', description: '解释高峰时段的 IANA 时区（默认 Asia/Shanghai）' },
+      cheapStrategy: { type: 'string', enum: ['wait', 'skip'], description: '高峰期策略：wait=排队等到下个空闲开始；skip=本轮跳过' },
+      cheapMarginMinutes: { type: 'number', description: '尾部余量分钟：距下个高峰不足该值时不开跑，排到下个空闲段；0=关闭尾部保护（默认）；建议设为 15 或 workerTimeoutMinutes' },
       reset: { type: 'boolean', description: '恢复默认配置' },
     },
     output: {
@@ -168,6 +218,15 @@ export function dispatcherConfigTool(ctx: ToolContext) {
           workerWorkspaceId: { type: 'string' },
           retryCooldownMinutes: { type: 'number' },
           workerTimeoutMinutes: { type: 'number' },
+          cheapMode: { type: 'boolean' },
+          cheapPreset: { type: 'string' },
+          cheapStrategy: { type: 'string' },
+          cheapMarginMinutes: { type: 'number' },
+          cheapMarginEffectiveMinutes: { type: 'number' },
+          cheapTimezone: { type: 'string' },
+          peakWindowsText: { type: 'string' },
+          nextCheapStartAt: { type: 'string' },
+          cheapQueueCount: { type: 'number' },
           configPath: { type: 'string' },
         },
       },
@@ -182,13 +241,16 @@ export function dispatcherConfigTool(ctx: ToolContext) {
             notifyFlomo: true, flomoTag: 'AI/DSH/派发', flomoStripBodyHash: true, notifyMac: true,
             notifyResult: true, notifyWechat: false, wechatGatewayUrl: '', wechatTo: '', wechatStateDir: '',
             taskFile: '', autoExecute: false, retryCooldownMinutes: 60, workerTimeoutMinutes: 30,
-            workerWorkspaceId: '',
+            workerWorkspaceId: '', cheapMode: false, cheapPreset: 'official-2026',
+            cheapStrategy: 'wait', cheapMarginMinutes: 0,
           } as Record<string, unknown>)
+          await ctx.store.clearCheapQueue()
           args = {}
         }
         const wantsTest = args !== undefined && args.testWechat === true
         const sanitized: Record<string, unknown> = { ...(args ?? {}) }
         delete sanitized.testWechat
+        delete sanitized.reset
         const view = await ctx.store.patch(sanitized)
         let testLine = ''
         if (wantsTest) {
@@ -205,7 +267,8 @@ export function dispatcherConfigTool(ctx: ToolContext) {
         const workspace = view.workerWorkspaceId === ''
           ? ''
           : ' · 工作区 ' + ((await resolveWorkspaceTitle(view.workerWorkspaceId)) ?? view.workerWorkspaceId)
-        return { ok: true, message: '配置已保存：' + (view.enabled ? '启用' : '禁用') + ' · ' + interval + auto + timeout + workspace + ' · 来源「' + view.projectName + '」' + testLine + ' · 通知：' + ([view.notifyWechat ? '微信' : '', view.notifyFlomo ? 'flomo' : '', view.notifyMac ? 'macOS' : ''].filter(Boolean).join('+') || '无'), enabled: view.enabled, dispatchIntervalMinutes: view.dispatchIntervalMinutes, projectName: view.projectName, dueMode: view.dueMode, includeUndated: view.includeUndated, notifyResult: view.notifyResult, notifyFlomo: view.notifyFlomo, flomoTag: view.flomoTag, flomoStripBodyHash: view.flomoStripBodyHash, notifyMac: view.notifyMac, notifyWechat: view.notifyWechat, wechatGatewayUrl: view.wechatGatewayUrl, wechatTo: view.wechatTo, wechatStateDir: view.wechatStateDir, taskFile: view.taskFile, autoExecute: view.autoExecute, workerWorkspaceId: view.workerWorkspaceId, retryCooldownMinutes: view.retryCooldownMinutes, workerTimeoutMinutes: view.workerTimeoutMinutes, configPath: view.configPath }
+        const cheap = ' · 省钱模式' + (view.cheapMode ? '开（' + view.cheapPresetLabel + '；' + (view.cheapStrategy === 'skip' ? '高峰跳过' : '高峰排队') + '）' : '关')
+        return { ok: true, message: '配置已保存：' + (view.enabled ? '启用' : '禁用') + ' · ' + interval + auto + timeout + workspace + cheap + ' · 来源「' + view.projectName + '」' + testLine + ' · 通知：' + ([view.notifyWechat ? '微信' : '', view.notifyFlomo ? 'flomo' : '', view.notifyMac ? 'macOS' : ''].filter(Boolean).join('+') || '无'), enabled: view.enabled, dispatchIntervalMinutes: view.dispatchIntervalMinutes, projectName: view.projectName, dueMode: view.dueMode, includeUndated: view.includeUndated, notifyResult: view.notifyResult, notifyFlomo: view.notifyFlomo, flomoTag: view.flomoTag, flomoStripBodyHash: view.flomoStripBodyHash, notifyMac: view.notifyMac, notifyWechat: view.notifyWechat, wechatGatewayUrl: view.wechatGatewayUrl, wechatTo: view.wechatTo, wechatStateDir: view.wechatStateDir, taskFile: view.taskFile, autoExecute: view.autoExecute, workerWorkspaceId: view.workerWorkspaceId, retryCooldownMinutes: view.retryCooldownMinutes, workerTimeoutMinutes: view.workerTimeoutMinutes, cheapMode: view.cheapMode, cheapPreset: view.cheapPreset, cheapStrategy: view.cheapStrategy, cheapMarginMinutes: view.cheapMarginMinutes, cheapMarginEffectiveMinutes: view.cheapMarginEffectiveMinutes, cheapTimezone: view.cheapTimezone, peakWindowsText: view.peakWindowsText, nextCheapStartAt: view.nextCheapStartAt, cheapQueueCount: view.cheapQueueCount, configPath: view.configPath }
       } catch (error) {
         return { ok: false, message: '配置失败: ' + String(error instanceof Error ? error.message : error) }
       }
@@ -217,8 +280,10 @@ export function dispatcherConfigTool(ctx: ToolContext) {
 export function dispatcherRunTool(ctx: ToolContext) {
   return defineTool({
     name: 'dispatcher_run',
-    description: '立即执行一次任务拉取：从滴答清单「5️⃣AI」（或配置的来源）拉取今天相关的任务（今天到期/逾期 + 无截止 + 开始日已到的「进行中」窗口任务），写入今日任务文件，并发送微信（ClawBot）+ flomo + macOS 通知（手动触发始终通知；按配置开关决定发哪几路）。若开启 autoExecute，只为**今天到期/逾期**的项单独开一个 DSH 会话去执行并自动勾掉；标「进行中」的窗口任务仅列出、不自动执行。常用于手动触发派发或验证配置。',
-    parameters: {},
+    description: '立即执行一次任务拉取：从滴答清单「5️⃣AI」（或配置的来源）拉取今天相关的任务（今天到期/逾期 + 无截止 + 开始日已到的「进行中」窗口任务），写入今日任务文件，并发送微信（ClawBot）+ flomo + macOS 通知（手动触发始终通知；按配置开关决定发哪几路）。若开启 autoExecute，只为**今天到期/逾期**的项单独开一个 DSH 会话去执行并自动勾掉；标「进行中」的窗口任务仅列出、不自动执行。**默认同样遵守省钱模式**：高峰时段会把任务排队到下个空闲开始（cheapStrategy=wait）或跳过（skip）；想立刻验证、不等空闲时段时传 ignoreCheapMode: true 强制立即执行。',
+    parameters: {
+      ignoreCheapMode: { type: 'boolean', description: '绕过省钱模式，立刻执行（默认 false：高峰时段排入空闲时段或跳过）' },
+    },
     output: {
       schema: {
         type: 'object',
@@ -233,32 +298,47 @@ export function dispatcherRunTool(ctx: ToolContext) {
           wechatNotify: { type: 'string' },
           flomoNotify: { type: 'string' },
           macNotify: { type: 'string' },
+          autoMode: { type: 'string' },
           autoExecuted: { type: 'number' },
           autoCompleted: { type: 'number' },
+          cheapQueued: { type: 'number' },
+          nextCheapStartAt: { type: 'string' },
         },
       },
       render: (_args: unknown, value: Record<string, unknown>) => text(String(value.message ?? '')),
     },
-    async execute() {
+    async execute(args: Record<string, unknown> | undefined) {
       try {
+        const ignoreCheapMode = args !== undefined && args.ignoreCheapMode === true
         const result = await doDispatch(ctx.store, ctx.api, { forceNotify: true })
         let autoExecuted = 0
         let autoCompleted = 0
+        let autoMode = 'off'
+        let cheapQueued = 0
+        let nextCheapStartAt = ''
         if (result.ok && result.tasks.length > 0) {
           const cfg = await ctx.store.load()
           if (cfg.autoExecute) {
-            const exec = await runAutoExecute(ctx.store, ctx.api, result.tasks, { notifyResult: true })
-            autoExecuted = exec.executed
-            autoCompleted = exec.completed
+            const gated = await runAutoExecuteGated(ctx.store, ctx.api, result.tasks, { notifyResult: true, ignoreCheapMode })
+            autoMode = gated.mode
+            autoExecuted = gated.executed
+            autoCompleted = gated.completed
+            cheapQueued = gated.queued
+            nextCheapStartAt = gated.nextCheapStartAt
           }
         }
         const flag = (channel: 'wechat' | 'flomo' | 'mac'): string => {
           const hit = result.notifies.find((n) => n.channel === channel)
           return hit === undefined ? 'none' : (hit.ok ? 'ok' : 'failed')
         }
+        const execLine = autoMode === 'queued'
+          ? ' 省钱模式：已排入 ' + (nextCheapStartAt || '下个空闲时段') + ' 的空闲时段执行（排队 ' + cheapQueued + ' 项）。'
+          : autoMode === 'skipped'
+            ? ' 省钱模式：高峰时段，本轮跳过。'
+            : (autoExecuted > 0 ? ' 自动执行 ' + autoExecuted + ' 项，完成 ' + autoCompleted + ' 项。' : '')
         return {
           ok: result.ok,
-          message: result.message + (autoExecuted > 0 ? ' 自动执行 ' + autoExecuted + ' 项，完成 ' + autoCompleted + ' 项。' : ''),
+          message: result.message + execLine,
           dispatchedAt: result.dispatchedAt,
           projectName: result.projectName,
           taskCount: result.taskCount,
@@ -266,8 +346,11 @@ export function dispatcherRunTool(ctx: ToolContext) {
           wechatNotify: flag('wechat'),
           flomoNotify: flag('flomo'),
           macNotify: flag('mac'),
+          autoMode,
           autoExecuted,
           autoCompleted,
+          cheapQueued,
+          nextCheapStartAt,
         }
       } catch (error) {
         return { ok: false, message: '派发失败: ' + String(error instanceof Error ? error.message : error) }

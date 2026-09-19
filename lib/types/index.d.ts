@@ -45,12 +45,13 @@ export interface Config {
 export declare function apply(ctx: Context, config?: Config): void;
 /** Re-exports for host consumers and the smoke tests. */
 export { dshHome, pluginPath } from './home.ts';
-export { DispatcherStore, configPath, DEFAULT_CONFIG_FILE, DEFAULT_TASK_FILE, DEFAULT_WORKER_PROMPT, DEFAULT_WORKER_TIMEOUT_MINUTES, type DispatcherConfig, type DispatcherConfigView } from './store.ts';
+export { DispatcherStore, configPath, DEFAULT_CONFIG_FILE, DEFAULT_TASK_FILE, DEFAULT_WORKER_PROMPT, DEFAULT_WORKER_TIMEOUT_MINUTES, type CheapStrategy, type DispatcherConfig, type DispatcherConfigView, type QueuedTask } from './store.ts';
 export { doDispatch, notifyText, localDateString, type DispatchedTask, type DispatchResult, type NotifyChannel } from './dispatch.ts';
 export { flomoMemo, macNotify, wechatSend, wechatRecipient, wechatStateDir, escapeHashes, buildFlomoContent, HASH_SAFE, WECHAT_GATEWAY_URL, type WechatOptions } from './notify.ts';
 export { dispatcherStatusTool, dispatcherConfigTool, dispatcherRunTool, dispatcherReportTool, buildTools, type ToolContext } from './tools.ts';
 export { makeRoutes, DISPATCHER_API } from './routes.ts';
-export { runAutoExecute, spawnWorker, buildWorkerPrompt, summarizeWorkerOutput, DEFAULT_WORKER_TIMEOUT_MS, type WorkerResult, type TaskExecResult, type AutoExecOutcome } from './executor.ts';
+export { runAutoExecute, runAutoExecuteGated, flushCheapQueueIfDue, spawnWorker, buildWorkerPrompt, summarizeWorkerOutput, DEFAULT_WORKER_TIMEOUT_MS, type WorkerResult, type TaskExecResult, type AutoExecOutcome, type GatedRunOptions, type GatedRunResult } from './executor.ts';
+export { CHEAP_PRESETS, DEFAULT_CHEAP_MARGIN_MINUTES, DEFAULT_CHEAP_PRESET, DEFAULT_CHEAP_TIMEZONE, LEGACY_UTC_WINDOWS, OFFICIAL_2026_WINDOWS, effectiveCheapTimezone, effectiveMarginMinutes, effectivePeakWindows, evaluateCheapMode, formatDateTimeInTimezone, formatDays, formatPeakWindowLine, formatPeakWindows, formatPeakWindowsText, hhmmToMinutes, isKnownPreset, isPeak, localWeekMinutes, minutesToHhmm, nextCheapStart, nextPeakStart, normalizePreset, parsePeakWindow, parsePeakWindows, parsePeakWindowsText, peakMask, type CheapDecision, type CheapGateConfig, type CheapPreset, type PeakWindow, } from './cheap.ts';
 export { listWorkspaces, resolveWorkspacePath, resolveWorkspaceTitle, workspaceStorePath, DEFAULT_WORKSPACE_STORE, type WorkspaceInfo } from './workspaces.ts';
 export { DeferredController, TIMER_LABEL, bundledScriptPath, coerceQueue, defaultQueue, installedScriptPath, newestSessionMtime, queuePath, timerPlistPath, type DeferredAction, type DeferredQueue, type DeferredStatus, type TimerState, } from './deferred.ts';
 export { defineTool };

@@ -14,6 +14,21 @@ import { readFile, writeFile, mkdir } from 'node:fs/promises'
 import path from 'node:path'
 
 import { pluginPath } from './home.ts'
+import {
+  CHEAP_PRESETS,
+  DEFAULT_CHEAP_MARGIN_MINUTES,
+  DEFAULT_CHEAP_PRESET,
+  DEFAULT_CHEAP_TIMEZONE,
+  OFFICIAL_2026_WINDOWS,
+  effectiveCheapTimezone,
+  effectiveMarginMinutes,
+  effectivePeakWindows,
+  formatPeakWindowsText,
+  isKnownPreset,
+  parsePeakWindows,
+  parsePeakWindowsText,
+  type PeakWindow,
+} from './cheap.ts'
 
 /** Default config location: DSH_HOME when set, else ~/.dsh (mode 0600). */
 export const DEFAULT_CONFIG_FILE = pluginPath(undefined, 'dsh-task-dispatcher.json')
@@ -38,6 +53,27 @@ export function configPath(): string {
 
 /** How to select tasks from the source project. */
 export type DueMode = 'today' | 'all'
+
+/** 省钱模式排队策略：wait = 排队等到下个空闲开始；skip = 本轮跳过。 */
+export type CheapStrategy = 'wait' | 'skip'
+
+/**
+ * 一条「省钱模式」排队任务（等待空闲时段执行）。
+ * 结构与 DispatchedTask 一致，额外带排队时间；整体落盘，宿主重启不丢。
+ */
+export interface QueuedTask {
+  id: string
+  projectId: string
+  title: string
+  content: string
+  dueDate: string
+  startDate: string
+  actionable: boolean
+  priority: number
+  tags: string[]
+  /** ISO time this task was queued. */
+  queuedAt: string
+}
 
 /** Persisted config shape. No secrets here. */
 export interface DispatcherConfig {
@@ -91,6 +127,22 @@ export interface DispatcherConfig {
   workerWorkspaceId: string
   /** TaskId -> ISO time of last auto-execute attempt (avoids re-spawning). */
   attempted: Record<string, string>
+  /** 「省钱模式」：勾选后自动执行只在 DeepSeek 空闲时段开跑（默认 false）。 */
+  cheapMode: boolean
+  /** 高峰时段口径 preset：official-2026 / legacy-utc / custom。 */
+  cheapPreset: string
+  /** 高峰时段黑名单（custom 时使用；切 preset 会覆盖它）。 */
+  peakWindows: PeakWindow[]
+  /** 解释高峰时段用的 IANA 时区（默认 Asia/Shanghai）。 */
+  cheapTimezone: string
+  /** 高峰期策略：wait = 排队等到下个空闲；skip = 本轮跳过。 */
+  cheapStrategy: CheapStrategy
+  /** 尾部余量（分钟；0 = 自动用 workerTimeoutMinutes）。 */
+  cheapMarginMinutes: number
+  /** 已排队任务的下个空闲开始时刻（ISO；无排队时空串）。 */
+  nextCheapStartAt: string
+  /** 等待空闲时段执行的排队任务（落盘，宿主重启不丢）。 */
+  cheapQueue: QueuedTask[]
 }
 
 /** Public, secret-free status view. */
@@ -121,6 +173,20 @@ export interface DispatcherConfigView {
   workerTimeoutMinutes: number
   workerPrompt: string
   workerWorkspaceId: string
+  cheapMode: boolean
+  cheapPreset: string
+  cheapPresetLabel: string
+  peakWindows: PeakWindow[]
+  /** 高峰时段编辑器的文本形式（每行 `1,2,3,4,5 09:00-12:00`）。 */
+  peakWindowsText: string
+  cheapTimezone: string
+  cheapStrategy: CheapStrategy
+  cheapMarginMinutes: number
+  /** 实际生效的余量（0 = 自动取 workerTimeoutMinutes）。 */
+  cheapMarginEffectiveMinutes: number
+  nextCheapStartAt: string
+  cheapQueue: QueuedTask[]
+  cheapQueueCount: number
   configPath: string
 }
 
@@ -153,6 +219,14 @@ function defaults(): DispatcherConfig {
     workerPrompt: DEFAULT_WORKER_PROMPT,
     workerWorkspaceId: '',
     attempted: {},
+    cheapMode: false,
+    cheapPreset: DEFAULT_CHEAP_PRESET,
+    peakWindows: OFFICIAL_2026_WINDOWS,
+    cheapTimezone: DEFAULT_CHEAP_TIMEZONE,
+    cheapStrategy: 'wait',
+    cheapMarginMinutes: DEFAULT_CHEAP_MARGIN_MINUTES,
+    nextCheapStartAt: '',
+    cheapQueue: [],
   }
 }
 
@@ -192,7 +266,41 @@ function parse(raw: unknown): DispatcherConfig {
     attempted: typeof record.attempted === 'object' && record.attempted !== null
       ? Object.fromEntries(Object.entries(record.attempted as Record<string, unknown>).filter(([, v]) => typeof v === 'string')) as Record<string, string>
       : {},
+    cheapMode: bool(record.cheapMode, d.cheapMode),
+    cheapPreset: isKnownPreset(str(record.cheapPreset, d.cheapPreset)) ? str(record.cheapPreset, d.cheapPreset) : 'custom',
+    peakWindows: parsePeakWindows(record.peakWindows)
+      ?? (isKnownPreset(str(record.cheapPreset, d.cheapPreset)) ? CHEAP_PRESETS[str(record.cheapPreset, d.cheapPreset)].windows : d.peakWindows),
+    cheapTimezone: str(record.cheapTimezone, d.cheapTimezone).trim() || d.cheapTimezone,
+    cheapStrategy: record.cheapStrategy === 'skip' ? 'skip' : 'wait',
+    cheapMarginMinutes: clampInt(num(record.cheapMarginMinutes, d.cheapMarginMinutes), 0, 24 * 60),
+    nextCheapStartAt: str(record.nextCheapStartAt, ''),
+    cheapQueue: parseQueuedTasks(record.cheapQueue),
   }
+}
+
+/** Parse unknown queue entries into QueuedTask[] (tolerant; drops malformed rows). */
+function parseQueuedTasks(value: unknown): QueuedTask[] {
+  if (!Array.isArray(value)) return []
+  const out: QueuedTask[] = []
+  for (const item of value) {
+    if (typeof item !== 'object' || item === null) continue
+    const record = item as Record<string, unknown>
+    if (typeof record.id !== 'string' || record.id === '') continue
+    if (typeof record.title !== 'string') continue
+    out.push({
+      id: record.id,
+      projectId: typeof record.projectId === 'string' ? record.projectId : '',
+      title: record.title,
+      content: typeof record.content === 'string' ? record.content : '',
+      dueDate: typeof record.dueDate === 'string' ? record.dueDate : '',
+      startDate: typeof record.startDate === 'string' ? record.startDate : '',
+      actionable: typeof record.actionable === 'boolean' ? record.actionable : true,
+      priority: typeof record.priority === 'number' && Number.isFinite(record.priority) ? record.priority : 0,
+      tags: Array.isArray(record.tags) ? record.tags.filter((t): t is string => typeof t === 'string') : [],
+      queuedAt: typeof record.queuedAt === 'string' ? record.queuedAt : '',
+    })
+  }
+  return out
 }
 
 function clampInt(value: number, min: number, max: number): number {
@@ -254,6 +362,18 @@ export class DispatcherStore {
       workerTimeoutMinutes: cfg.workerTimeoutMinutes,
       workerPrompt: cfg.workerPrompt,
       workerWorkspaceId: cfg.workerWorkspaceId,
+      cheapMode: cfg.cheapMode,
+      cheapPreset: isKnownPreset(cfg.cheapPreset) ? cfg.cheapPreset : 'custom',
+      cheapPresetLabel: isKnownPreset(cfg.cheapPreset) ? CHEAP_PRESETS[cfg.cheapPreset].label : '自定义高峰时段',
+      peakWindows: effectivePeakWindows(cfg),
+      peakWindowsText: formatPeakWindowsText(effectivePeakWindows(cfg)),
+      cheapTimezone: effectiveCheapTimezone(cfg),
+      cheapStrategy: cfg.cheapStrategy,
+      cheapMarginMinutes: cfg.cheapMarginMinutes,
+      cheapMarginEffectiveMinutes: effectiveMarginMinutes(cfg),
+      nextCheapStartAt: cfg.nextCheapStartAt,
+      cheapQueue: cfg.cheapQueue,
+      cheapQueueCount: cfg.cheapQueue.length,
       configPath: configPath(),
     }
   }
@@ -284,7 +404,49 @@ export class DispatcherStore {
     if (args !== undefined && args.workerTimeoutMinutes !== undefined) next.workerTimeoutMinutes = clampInt(Number(args.workerTimeoutMinutes), 1, 24 * 60)
     if (args !== undefined && typeof args.workerPrompt === 'string' && args.workerPrompt.trim() !== '') next.workerPrompt = args.workerPrompt.trim()
     if (args !== undefined && typeof args.workerWorkspaceId === 'string') next.workerWorkspaceId = args.workerWorkspaceId.trim()
+    if (args !== undefined && typeof args.cheapMode === 'boolean') next.cheapMode = args.cheapMode
+    if (args !== undefined && typeof args.cheapStrategy === 'string' && (args.cheapStrategy === 'wait' || args.cheapStrategy === 'skip')) next.cheapStrategy = args.cheapStrategy
+    if (args !== undefined && args.cheapMarginMinutes !== undefined) next.cheapMarginMinutes = clampInt(Number(args.cheapMarginMinutes), 0, 24 * 60)
+    // Preset switching first (it carries timezone + windows), then explicit
+    // overrides: supplying windows/timezone turns the config into `custom`.
+    if (args !== undefined && typeof args.cheapPreset === 'string' && args.cheapPreset.trim() !== '') {
+      const presetId = args.cheapPreset.trim()
+      if (isKnownPreset(presetId)) {
+        next.cheapPreset = presetId
+        next.peakWindows = CHEAP_PRESETS[presetId].windows
+        next.cheapTimezone = CHEAP_PRESETS[presetId].timezone
+      } else {
+        next.cheapPreset = 'custom'
+      }
+    }
+    if (args !== undefined && Array.isArray(args.peakWindows)) {
+      const parsed = parsePeakWindows(args.peakWindows)
+      if (parsed !== null) { next.peakWindows = parsed; next.cheapPreset = 'custom' }
+    }
+    if (args !== undefined && typeof args.peakWindowsText === 'string') {
+      const parsed = parsePeakWindowsText(args.peakWindowsText)
+      if (parsed !== null) { next.peakWindows = parsed; next.cheapPreset = 'custom' }
+    }
+    if (args !== undefined && typeof args.cheapTimezone === 'string' && args.cheapTimezone.trim() !== '') next.cheapTimezone = args.cheapTimezone.trim()
     await this.save(next)
+    return this.view()
+  }
+
+  /** 把任务合并进省钱模式排队队列，并记录下个空闲开始时刻（落盘）。 */
+  async enqueueCheap(tasks: Array<Omit<QueuedTask, 'queuedAt'>>, nextCheapStartAt: string): Promise<DispatcherConfigView> {
+    const cfg = await this.load()
+    const queuedAt = new Date().toISOString()
+    const merged = new Map<string, QueuedTask>()
+    for (const task of cfg.cheapQueue) merged.set(task.id, task)
+    for (const task of tasks) merged.set(task.id, { ...task, queuedAt })
+    await this.save({ ...cfg, cheapQueue: [...merged.values()], nextCheapStartAt })
+    return this.view()
+  }
+
+  /** 清空排队队列（到点执行 / 关闭省钱模式 / 手动绕过时调用）。 */
+  async clearCheapQueue(): Promise<DispatcherConfigView> {
+    const cfg = await this.load()
+    await this.save({ ...cfg, cheapQueue: [], nextCheapStartAt: '' })
     return this.view()
   }
 

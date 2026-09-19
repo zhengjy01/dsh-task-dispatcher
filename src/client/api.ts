@@ -31,6 +31,18 @@ export interface DispatcherConfigView {
   workerTimeoutMinutes: number
   workerPrompt: string
   workerWorkspaceId: string
+  cheapMode: boolean
+  cheapPreset: string
+  cheapPresetLabel: string
+  peakWindows: { days: number[]; start: string; end: string }[]
+  peakWindowsText: string
+  cheapTimezone: string
+  cheapStrategy: string
+  cheapMarginMinutes: number
+  cheapMarginEffectiveMinutes: number
+  nextCheapStartAt: string
+  cheapQueue: { id: string; title: string; queuedAt: string }[]
+  cheapQueueCount: number
   configPath: string
 }
 
@@ -59,6 +71,17 @@ export interface DispatcherRunResult {
   wechatNotify?: string
   flomoNotify?: string
   macNotify?: string
+  /** 省钱模式门控结果（开启自动执行时才有）。 */
+  cheap?: {
+    mode: string
+    executed: number
+    completed: number
+    failed: number
+    queued: number
+    nextCheapStartAt: string
+    nextCheapStartLabel: string
+    log: string[]
+  }
 }
 
 /** One queued task in the deferred-sync queue. */
@@ -170,11 +193,11 @@ export class DispatcherApi {
     })
   }
 
-  async run(): Promise<DispatcherRunResult> {
+  async run(ignoreCheapMode = false): Promise<DispatcherRunResult> {
     return request<DispatcherRunResult>('/api/dsh-task-dispatcher/run', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({}),
+      body: JSON.stringify({ ignoreCheapMode }),
     })
   }
 

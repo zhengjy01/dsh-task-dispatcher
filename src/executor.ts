@@ -28,12 +28,13 @@
 
 import { spawn } from 'node:child_process'
 import { homedir } from 'node:os'
-import type { DispatcherStore } from './store.ts'
+import type { DispatcherStore, QueuedTask } from './store.ts'
 import { DEFAULT_WORKER_TIMEOUT_MINUTES } from './store.ts'
 import type { DispatchedTask } from './dispatch.ts'
 import { notifyText } from './dispatch.ts'
 import { resolveWorkspacePath } from './workspaces.ts'
 import { resolveExecutable } from './executable.ts'
+import { evaluateCheapMode, type CheapDecision } from './cheap.ts'
 
 /** Outcome of one worker subprocess. */
 export interface WorkerResult {
@@ -279,4 +280,169 @@ export async function runAutoExecute(
     await notify(batchMessage(outcome))
   }
   return outcome
+}
+
+/** Options for the cheap-mode gated execution (threaded into runAutoExecute). */
+export interface GatedRunOptions {
+  /** 手动触发时绕过省钱模式（立刻执行，不等空闲时段）。 */
+  ignoreCheapMode?: boolean
+  /** Push the per-task result notifications (real callers set it). */
+  notifyResult?: boolean
+  /** Injectable clock (tests / deterministic decisions). */
+  now?: Date
+  spawn?: (prompt: string, opts: SpawnWorkerOptions) => Promise<WorkerResult>
+  onComplete?: (task: DispatchedTask) => Promise<void>
+  notify?: (text: string) => Promise<void>
+}
+
+/** Outcome of a gated execution: ran now / queued / skipped / disabled. */
+export interface GatedRunResult {
+  mode: 'executed' | 'queued' | 'skipped' | 'disabled'
+  outcome: AutoExecOutcome | null
+  executed: number
+  completed: number
+  failed: number
+  skipped: number
+  /** Number of tasks left waiting for the cheap window. */
+  queued: number
+  nextCheapStartAt: string
+  nextCheapStartLabel: string
+  inPeak: boolean
+  decision: CheapDecision | null
+  log: string[]
+}
+
+/** Merge queued + freshly pulled tasks, de-duplicated by id (fresh wins). */
+function mergeTasks(queue: QueuedTask[], tasks: DispatchedTask[]): DispatchedTask[] {
+  const merged = new Map<string, DispatchedTask>()
+  for (const task of queue) merged.set(task.id, task)
+  for (const task of tasks) merged.set(task.id, task)
+  return [...merged.values()]
+}
+
+/** Build the "queued for the cheap window" notification body. */
+function queuedNotice(tasks: DispatchedTask[], decision: CheapDecision): string {
+  const lines = [
+    '💰 省钱模式：已排入 ' + (decision.nextCheapStartLabel || decision.nextCheapStartAt) + ' 空闲时段执行 · ' + tasks.length + ' 项',
+    ...tasks.slice(0, 12).map((t) => '- ' + t.title),
+  ]
+  if (tasks.length > 12) lines.push('…还有 ' + (tasks.length - 12) + ' 项')
+  lines.push('（' + decision.reason + '）')
+  return lines.join('\n')
+}
+
+/** Build the "skipped this round" notification body. */
+function skippedNotice(tasks: DispatchedTask[], decision: CheapDecision): string {
+  const lines = [
+    '💰 省钱模式：当前为高峰时段，本轮跳过 ' + tasks.length + ' 项（策略=skip）',
+    ...tasks.slice(0, 12).map((t) => '- ' + t.title),
+  ]
+  if (tasks.length > 12) lines.push('…还有 ' + (tasks.length - 12) + ' 项')
+  lines.push('（' + decision.reason + '）')
+  return lines.join('\n')
+}
+
+/** Raw counts from an auto-execute outcome (or zeros). */
+function countsOf(outcome: AutoExecOutcome | null): { executed: number; completed: number; failed: number; skipped: number } {
+  return outcome === null
+    ? { executed: 0, completed: 0, failed: 0, skipped: 0 }
+    : { executed: outcome.executed, completed: outcome.completed, failed: outcome.failed, skipped: outcome.skipped }
+}
+
+/**
+ * 带「省钱模式」门控的自动执行。
+ *
+ * 判定点刻意只在「准备开 worker 之前」：拉取节奏、过滤、串行执行都不参与判定。
+ * - 省钱模式关闭（或 ignoreCheapMode）→ 与旧版完全一致，立刻执行。
+ * - 高峰期 → 策略 wait 把任务落盘排队并通知；策略 skip 本轮跳过并通知。
+ * - 空闲期且距下个高峰 ≥ 余量 → 立刻执行（同时把之前排队的任务一起跑了）。
+ */
+export async function runAutoExecuteGated(
+  store: DispatcherStore,
+  api: { completeTask(projectId: string, taskId: string): Promise<void> },
+  tasks: DispatchedTask[],
+  opts: GatedRunOptions = {},
+): Promise<GatedRunResult> {
+  const cfg = await store.load()
+  const log: string[] = []
+  const base: GatedRunResult = {
+    mode: 'disabled', outcome: null, executed: 0, completed: 0, failed: 0, skipped: 0, queued: cfg.cheapQueue.length,
+    nextCheapStartAt: cfg.nextCheapStartAt, nextCheapStartLabel: '', inPeak: false, decision: null, log,
+  }
+  if (!cfg.autoExecute) {
+    log.push('自动执行未开启（autoExecute=false）')
+    return base
+  }
+  const notify = opts.notify ?? (async (text: string) => { await notifyText(text, cfg, { macTitle: 'DSH 省钱模式', macSubtitle: '任务派发器' }) })
+  const runOpts = {
+    ...(opts.spawn !== undefined ? { spawn: opts.spawn } : {}),
+    ...(opts.onComplete !== undefined ? { onComplete: opts.onComplete } : {}),
+    ...(opts.notifyResult !== undefined ? { notifyResult: opts.notifyResult } : {}),
+    ...(opts.notify !== undefined ? { notify: opts.notify } : {}),
+  }
+  const bypass = opts.ignoreCheapMode === true
+  if (cfg.cheapMode && !bypass) {
+    const decision = evaluateCheapMode(cfg, opts.now ?? new Date())
+    if (!decision.canRunNow) {
+      if (cfg.cheapStrategy === 'skip') {
+        log.push('省钱模式：高峰时段，跳过 ' + tasks.length + ' 项（' + decision.reason + '）')
+        if (opts.notifyResult === true && tasks.length > 0) await notify(skippedNotice(tasks, decision))
+        return { ...base, mode: 'skipped', skipped: tasks.length, inPeak: decision.inPeak, decision }
+      }
+      await store.enqueueCheap(tasks, decision.nextCheapStartAt)
+      const queuedCount = (await store.view()).cheapQueueCount
+      log.push('省钱模式：已排入 ' + (decision.nextCheapStartLabel || decision.nextCheapStartAt) + ' 空闲时段（' + tasks.length + ' 项，' + decision.reason + '）')
+      if (opts.notifyResult === true && tasks.length > 0) await notify(queuedNotice(tasks, decision))
+      return {
+        ...base, mode: 'queued', queued: queuedCount, nextCheapStartAt: decision.nextCheapStartAt,
+        nextCheapStartLabel: decision.nextCheapStartLabel, inPeak: decision.inPeak, decision,
+      }
+    }
+    // 空闲且够余量：把之前排队的任务一并执行，然后清空队列。
+    const merged = mergeTasks(cfg.cheapQueue, tasks)
+    if (cfg.cheapQueue.length > 0) await store.clearCheapQueue()
+    log.push('省钱模式：当前空闲，执行 ' + merged.length + ' 项（其中排队 ' + cfg.cheapQueue.length + ' 项）')
+    const outcome = await runAutoExecute(store, api, merged, runOpts)
+    return { ...base, mode: 'executed', outcome, ...countsOf(outcome), queued: 0, inPeak: decision.inPeak, decision, log }
+  }
+  // 未开省钱模式（或手动绕过）：旧行为。关闭省钱模式时顺带把遗留队列排空。
+  const leftover = bypass ? [] : cfg.cheapQueue
+  if (!bypass && leftover.length > 0) await store.clearCheapQueue()
+  const merged = mergeTasks(leftover, tasks)
+  if (bypass && tasks.length > 0) log.push('已忽略省钱模式（ignoreCheapMode）：立刻执行 ' + merged.length + ' 项')
+  const outcome = await runAutoExecute(store, api, merged, runOpts)
+  return { ...base, mode: 'executed', outcome, ...countsOf(outcome), queued: (await store.view()).cheapQueueCount, log }
+}
+
+/**
+ * 定时器每分钟调用：队列到点（进入空闲）就把排队任务跑掉。
+ *
+ * 与拉取节奏解耦——即便 dispatchIntervalMinutes 很长（或为 0），排队任务也会在
+ * 空闲开始后的下一次检查触发。队列在开跑前先清空，避免进程被中断后重复执行。
+ *
+ * @returns the outcome, or null when there is nothing due (empty queue / still peak / autoExecute off).
+ */
+export async function flushCheapQueueIfDue(
+  store: DispatcherStore,
+  api: { completeTask(projectId: string, taskId: string): Promise<void> },
+  opts: GatedRunOptions = {},
+): Promise<GatedRunResult | null> {
+  const cfg = await store.load()
+  if (!cfg.autoExecute || cfg.cheapQueue.length === 0) return null
+  const decision = evaluateCheapMode(cfg, opts.now ?? new Date())
+  if (!decision.canRunNow) return null
+  const tasks = cfg.cheapQueue
+  await store.clearCheapQueue()
+  const runOpts = {
+    ...(opts.spawn !== undefined ? { spawn: opts.spawn } : {}),
+    ...(opts.onComplete !== undefined ? { onComplete: opts.onComplete } : {}),
+    ...(opts.notifyResult !== undefined ? { notifyResult: opts.notifyResult } : {}),
+    ...(opts.notify !== undefined ? { notify: opts.notify } : {}),
+  }
+  const log = ['省钱模式：空闲开始，执行排队任务 ' + tasks.length + ' 项']
+  const outcome = await runAutoExecute(store, api, tasks, runOpts)
+  return {
+    mode: 'executed', outcome, ...countsOf(outcome), queued: 0,
+    nextCheapStartAt: '', nextCheapStartLabel: '', inPeak: decision.inPeak, decision, log,
+  }
 }

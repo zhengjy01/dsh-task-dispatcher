@@ -81,6 +81,7 @@ function statusText(view: DispatcherConfigView | null): string {
     : ('每 ' + view.dispatchIntervalMinutes + ' 分钟')
   return (view.enabled ? '已启用' : '已禁用') + ' · ' + interval + ' · 来源「' + view.projectName + '」' +
     (view.autoExecute ? ' · 自动执行' : '') +
+    (view.cheapMode ? ' · 省钱模式开' : '') +
     (view.lastDispatchAt ? ' · 上次 ' + view.lastDispatchAt + '（' + view.lastTaskCount + ' 项）' : ' · 尚未拉取')
 }
 
@@ -116,6 +117,13 @@ export function TaskDispatcherSettingsPanel(): JSX.Element {
   const [taskFile, setTaskFile] = useState('')
   const [workspaces, setWorkspaces] = useState<WorkspaceInfo[]>([])
   const [workerWorkspaceId, setWorkerWorkspaceId] = useState('')
+  const [cheapMode, setCheapMode] = useState(false)
+  const [cheapPreset, setCheapPreset] = useState('official-2026')
+  const [cheapStrategy, setCheapStrategy] = useState('wait')
+  const [cheapMarginMinutes, setCheapMarginMinutes] = useState('0')
+  const [cheapTimezone, setCheapTimezone] = useState('Asia/Shanghai')
+  const [peakText, setPeakText] = useState('')
+  const [runIgnoreCheap, setRunIgnoreCheap] = useState(false)
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState('')
   const [deferred, setDeferred] = useState<DeferredStatus | null>(null)
@@ -144,6 +152,12 @@ export function TaskDispatcherSettingsPanel(): JSX.Element {
       setWorkerTimeoutMinutes(String(v.workerTimeoutMinutes))
       setTaskFile(v.taskFile)
       setWorkerWorkspaceId(v.workerWorkspaceId)
+      setCheapMode(v.cheapMode)
+      setCheapPreset(v.cheapPreset)
+      setCheapStrategy(v.cheapStrategy)
+      setCheapMarginMinutes(String(v.cheapMarginMinutes))
+      setCheapTimezone(v.cheapTimezone)
+      setPeakText(v.peakWindowsText)
     } catch (error) {
       setMsg('读取状态失败: ' + String(error instanceof Error ? error.message : error))
     }
@@ -200,6 +214,12 @@ export function TaskDispatcherSettingsPanel(): JSX.Element {
         autoExecute,
         workerWorkspaceId,
         workerTimeoutMinutes: Number(workerTimeoutMinutes) >= 1 ? Number(workerTimeoutMinutes) : 30,
+        cheapMode,
+        cheapPreset,
+        cheapStrategy,
+        cheapTimezone,
+        cheapMarginMinutes: Number(cheapMarginMinutes) >= 0 ? Number(cheapMarginMinutes) : 0,
+        peakWindowsText: peakText,
         ...(taskFile.trim() !== '' ? { taskFile } : {}),
       })
       setView(next)
@@ -209,7 +229,7 @@ export function TaskDispatcherSettingsPanel(): JSX.Element {
 
   const dispatchNow = (): void => {
     void run(async () => {
-      const result: DispatcherRunResult = await api.run()
+      const result: DispatcherRunResult = await api.run(runIgnoreCheap)
       setMsg((result.ok ? '[ok] ' : '[failed] ') + result.message)
       await refresh()
       return result.ok ? '[ok] ' + result.message : '[failed] ' + result.message
@@ -294,6 +314,57 @@ export function TaskDispatcherSettingsPanel(): JSX.Element {
         <span style={s.label}>分钟（默认 30；到点 SIGKILL 该执行会话，1–1440）</span>
       </div>
 
+      <div style={{ borderTop: '1px solid rgba(128,128,128,0.25)', paddingTop: '10px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+        <label style={s.check}>
+          <input type="checkbox" checked={cheapMode} onChange={(e) => setCheapMode(e.target.checked)} />
+          省钱模式（自动执行只在 DeepSeek 空闲/优惠时段开跑）
+        </label>
+        <p style={s.hint}>
+          官方口径（2026-08-17 起）：高峰 = 北京时间周一至周五 09:00–12:00、14:00–18:00（价格翻倍）；其余时间（工作日
+          12:00–14:00、18:00–次日 09:00、周六周日全天）为空闲时段（约半价）。不勾选时行为与现有逻辑完全一致。时段仅作用于
+          <b>自动执行</b>，拉取/过滤/串行都不变；排队状态落盘，DSH 重启不丢。
+        </p>
+        {cheapMode && (
+          <>
+            <div style={s.row}>
+              <span style={s.label}>时段口径</span>
+              <select style={{ ...s.input, flex: 1 }} value={cheapPreset} onChange={(e) => setCheapPreset(e.target.value)}>
+                <option value="official-2026">官方现行（周中 09–12 / 14–18 高峰）</option>
+                <option value="legacy-utc">旧版 UTC 16:30–00:30 空闲</option>
+                <option value="custom">自定义（用下方时段表）</option>
+              </select>
+            </div>
+            <div style={s.row}>
+              <span style={s.label}>时区</span>
+              <input style={{ ...s.input, ...s.flex }} value={cheapTimezone} onChange={(e) => setCheapTimezone(e.target.value)} placeholder="Asia/Shanghai" />
+              <span style={s.label}>策略</span>
+              <select style={s.input} value={cheapStrategy} onChange={(e) => setCheapStrategy(e.target.value)}>
+                <option value="wait">排队等空闲</option>
+                <option value="skip">本轮跳过</option>
+              </select>
+            </div>
+            <div style={s.row}>
+              <span style={s.label}>尾部余量</span>
+              <input style={s.num} value={cheapMarginMinutes} onChange={(e) => setCheapMarginMinutes(e.target.value)} />
+              <span style={s.label}>分钟（0 = 关闭尾部保护；建议 15 或 worker 超时，避免跑进高峰）</span>
+            </div>
+            <span style={s.label}>高峰时段表（每行 `1,2,3,4,5 09:00-12:00`；0=周日…6=周六；start&gt;end 跨午夜；空 = 一直空闲）</span>
+            <textarea
+              style={{ ...s.input, minHeight: '52px', fontFamily: 'monospace', resize: 'vertical' }}
+              value={peakText}
+              onChange={(e) => setPeakText(e.target.value)}
+            />
+            {view !== null && view.cheapMode && (
+              <p style={s.hint}>
+                当前口径：{view.cheapPresetLabel} · 高峰时段：{view.peakWindowsText || '（无，一直空闲）'}<br />
+                下次执行时间：{view.nextCheapStartAt !== '' ? view.nextCheapStartAt : '（当前空闲，立即可执行）'} · 排队任务：{view.cheapQueueCount} 项
+                {view.cheapQueueCount > 0 ? '（' + view.cheapQueue.map((t) => t.title).join('；') + '）' : ''}
+              </p>
+            )}
+          </>
+        )}
+      </div>
+
       <div style={s.row}>
         <span style={s.label}>来源清单</span>
         <input style={{ ...s.input, ...s.flex }} value={projectName} onChange={(e) => setProjectName(e.target.value)} />
@@ -357,6 +428,12 @@ export function TaskDispatcherSettingsPanel(): JSX.Element {
         <button style={s.button} onClick={dispatchNow} disabled={busy}>立即拉取</button>
         <button style={s.button} onClick={() => void refresh()} disabled={busy}>刷新</button>
       </div>
+      {cheapMode && (
+        <label style={s.check}>
+          <input type="checkbox" checked={runIgnoreCheap} onChange={(e) => setRunIgnoreCheap(e.target.checked)} />
+          立即拉取时忽略省钱模式（高峰也马上执行，仅本次）
+        </label>
+      )}
 
       {lastList !== null && (
         <>

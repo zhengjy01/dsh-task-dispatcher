@@ -30,6 +30,26 @@ export interface DispatcherConfigView {
     workerTimeoutMinutes: number;
     workerPrompt: string;
     workerWorkspaceId: string;
+    cheapMode: boolean;
+    cheapPreset: string;
+    cheapPresetLabel: string;
+    peakWindows: {
+        days: number[];
+        start: string;
+        end: string;
+    }[];
+    peakWindowsText: string;
+    cheapTimezone: string;
+    cheapStrategy: string;
+    cheapMarginMinutes: number;
+    cheapMarginEffectiveMinutes: number;
+    nextCheapStartAt: string;
+    cheapQueue: {
+        id: string;
+        title: string;
+        queuedAt: string;
+    }[];
+    cheapQueueCount: number;
     configPath: string;
 }
 /** One DSH workspace (id + display title + directory path). */
@@ -59,6 +79,17 @@ export interface DispatcherRunResult {
     wechatNotify?: string;
     flomoNotify?: string;
     macNotify?: string;
+    /** 省钱模式门控结果（开启自动执行时才有）。 */
+    cheap?: {
+        mode: string;
+        executed: number;
+        completed: number;
+        failed: number;
+        queued: number;
+        nextCheapStartAt: string;
+        nextCheapStartLabel: string;
+        log: string[];
+    };
 }
 /** One queued task in the deferred-sync queue. */
 export interface DeferredTask {
@@ -120,7 +151,7 @@ export declare class DispatcherApi {
     getConfig(): Promise<DispatcherConfigView>;
     getStatus(): Promise<DispatcherConfigView>;
     setConfig(patch: Record<string, unknown>): Promise<DispatcherConfigView>;
-    run(): Promise<DispatcherRunResult>;
+    run(ignoreCheapMode?: boolean): Promise<DispatcherRunResult>;
     /** List the DSH workspaces the auto-execute worker can run in. */
     getWorkspaces(): Promise<WorkspaceInfo[]>;
     /** Deferred TickTick sync: queue, thresholds, timer state. */
